@@ -65,6 +65,10 @@ class AgentConfiguration(Base):
     restaurant_id = Column(Integer, ForeignKey("restaurants.id"), unique=True, nullable=False)
     voice_engine = Column(String(50), nullable=False, default="urdu-female")
     is_active = Column(Boolean, nullable=False, default=True)
+    # Per-tenant overrides for the streaming voice engine (see
+    # voice/config.py VoiceConfig fields): stt_language, tts_provider,
+    # tts_voice, endpointing_ms, barge_in_mode, transfer_number, ...
+    voice_settings = Column(JSON, nullable=True)
 
     system_prompt = Column(String(2000), nullable=False, default="You are the friendly AI voice-agent taking orders for Restaurant. Speak in Roman Urdu/Urdu-English mix. Reference the menu database for pricing. Do not offer discounts exceeding PKR 100. Do not repeat greetings (like Assalam-o-Alaikum) in subsequent turns. Be extremely brief, using under 30 words per conversation bubble. Make sure to collect the customer's delivery address before concluding the order.")
 
@@ -88,6 +92,9 @@ class ChatHistory(Base):
     status = Column(String(50), nullable=False, default="in_progress")
     recording_url = Column(String(255), nullable=True)
     transport = Column(String(50), nullable=False, default="twilio")
+    # Per-turn latency waterfall from the streaming engine
+    # (voice/metrics.py CallMetrics.to_dict()).
+    metrics = Column(JSON, nullable=True)
 
     restaurant = relationship("Restaurant")
     orders = relationship("Order", back_populates="call_log")

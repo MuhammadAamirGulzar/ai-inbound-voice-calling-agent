@@ -53,6 +53,13 @@ if not SESSION_MIDDLEWARE_SECRET_KEY or not JWT_SECRET_KEY:
 # ── App setup ──
 models.Base.metadata.create_all(bind=engine)
 
+# Additive migration for pre-existing databases (voice engine columns).
+from sql.database import ensure_columns
+try:
+    ensure_columns()
+except Exception as _mig_err:
+    print(f"[db] column migration warning: {_mig_err}")
+
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=SESSION_MIDDLEWARE_SECRET_KEY)
 templates = Jinja2Templates(directory="templates")
@@ -63,6 +70,9 @@ async def startup_event():
     import subprocess
     import sys
     import asyncio
+    if os.getenv("RAG_AUTOSTART", "true").lower() in ("0", "false", "no"):
+        print_info("RAG_AUTOSTART disabled — skipping knowledge_rag sidecar.")
+        return
     proj_root = os.path.dirname(os.path.abspath(__file__))
     rag_dir = os.path.join(proj_root, "knowledge_rag")
 
@@ -137,8 +147,13 @@ templates.env.globals["pk_time"] = pk_time_filter
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(twilio_router)
 
-from test_routes import router as test_router
-app.include_router(test_router)
+# Browser-mic test console needs the local ML stack (torch/whisper);
+# skip it gracefully on cloud-streaming-only deployments.
+try:
+    from test_routes import router as test_router
+    app.include_router(test_router)
+except ImportError as _test_err:
+    print(f"Local test console disabled (missing local ML deps): {_test_err}")
 
 # Include SIP router dynamically if enabled
 SIP_ENABLED = os.getenv("SIP_ENABLED", "false").lower() == "true"

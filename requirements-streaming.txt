@@ -1,0 +1,53 @@
+# ============================================================
+# Streaming voice engine — cloud-only deployment (NO torch)
+# ============================================================
+# Installs everything needed to run the platform with the
+# production streaming pipeline (Deepgram STT + OpenAI-compatible
+# LLM + Aura/ElevenLabs TTS). ~50 MB instead of ~4 GB, and the
+# hot path never touches a local model, so one small instance
+# holds many concurrent calls.
+#
+#   pip install -r requirements-streaming.txt
+#
+# For the offline legacy pipeline (local whisper/ollama/piper),
+# use requirements-cpu.txt instead.
+# ============================================================
+
+# Web framework
+fastapi==0.114.0
+uvicorn==0.30.6
+starlette==0.38.5
+python-multipart==0.0.9
+jinja2==3.1.4
+itsdangerous==2.2.0
+
+# Data / validation
+pydantic==2.9.1
+email-validator==2.2.0
+
+# Database
+SQLAlchemy==2.0.34
+psycopg2-binary==2.9.9
+
+# Auth
+PyJWT==2.9.0
+cryptography==43.0.1
+Werkzeug==3.0.4
+
+# Env
+python-dotenv==1.0.1
+
+# Voice engine (STT/LLM/TTS clients + audio)
+httpx==0.27.2
+websockets==13.0.1
+openai==1.44.0
+numpy==1.26.4
+
+# Telephony
+twilio>=9.3.2
+
+# Misc (email notifications, requests-based helpers)
+requests==2.32.3
+
+# Dev / testing
+pytest>=8.0

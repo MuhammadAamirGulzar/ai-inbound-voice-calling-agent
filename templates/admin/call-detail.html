@@ -55,6 +55,68 @@
             </div>
         </div>
 
+        <!-- Voice Latency (streaming engine per-turn metrics) -->
+        {% if call.metrics and call.metrics.turns %}
+        {% set summary = call.metrics.summary %}
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title"><i class="fa-solid fa-gauge-high mr-2" style="color: var(--primary);"></i>Voice Latency</div>
+            </div>
+            <div class="card-body">
+                <div class="metadata-grid" style="margin-bottom: 14px;">
+                    <div class="metadata-item">
+                        <div class="metadata-label">Response p50 / p95</div>
+                        <div class="metadata-value">
+                            {{ summary.response_ms_p50 or '—' }} / {{ summary.response_ms_p95 or '—' }} ms
+                        </div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="metadata-label">Turns / Barge-ins</div>
+                        <div class="metadata-value">{{ summary.turn_count }} / {{ summary.barge_ins }}</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="metadata-label">Greeting First Audio</div>
+                        <div class="metadata-value">{{ summary.greeting_first_audio_ms or '—' }} ms</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="metadata-label">Providers</div>
+                        <div class="metadata-value" style="font-size: 12px;">
+                            {{ summary.providers.stt }} · {{ summary.providers.llm }} · {{ summary.providers.tts }}
+                        </div>
+                    </div>
+                </div>
+                <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="color: var(--text-secondary); text-align: left;">
+                            <th style="padding: 4px;">#</th>
+                            <th style="padding: 4px;" title="user stopped speaking → first audio to caller">Response</th>
+                            <th style="padding: 4px;" title="STT final → first LLM token">LLM TTFT</th>
+                            <th style="padding: 4px;" title="first LLM token → first TTS byte">TTS TTFB</th>
+                            <th style="padding: 4px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for turn in call.metrics.turns %}
+                        <tr style="border-top: 1px solid var(--border);">
+                            <td style="padding: 4px;">{{ turn.turn }}</td>
+                            <td style="padding: 4px; font-weight: 600;
+                                       {% if turn.response_ms and turn.response_ms > 1500 %}color: var(--danger, #d9534f);{% endif %}">
+                                {{ turn.response_ms or '—' }} ms</td>
+                            <td style="padding: 4px;">{{ turn.llm_ttft_ms or '—' }}</td>
+                            <td style="padding: 4px;">{{ turn.tts_ttfb_ms or '—' }}</td>
+                            <td style="padding: 4px;">
+                                {% if turn.barged_in %}<span class="badge badge-warning" style="font-size: 10px;">barge-in</span>{% endif %}
+                                {% if turn.tool_call %}<span class="badge badge-success" style="font-size: 10px;">{{ turn.tool_call }}</span>{% endif %}
+                                {% if turn.error %}<span class="badge badge-danger" style="font-size: 10px;" title="{{ turn.error }}">error</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Audio Player -->
         <div class="card">
             <div class="card-header">

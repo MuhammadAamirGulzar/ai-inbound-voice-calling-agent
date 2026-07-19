@@ -17,7 +17,8 @@ from openvoicechat.llm.llm_ollama_rag import Chatbot_OllamaRAG as Chatbot
 
 from sql.database import SessionLocal
 from sql import models
-from twilio_routes import FallbackMouth, resolve_restaurants_for_call
+from twilio_legacy import FallbackMouth
+from twilio_routes import resolve_restaurants_for_call
 
 router = APIRouter()
 
