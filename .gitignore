@@ -37,3 +37,8 @@ gpt-crawler/*.json
 .playwright-browsers
 tmp/
 scratch/
+# Generated data and measurement output
+*.sqlite3
+knowledge_rag/data/chroma/
+speech_timing.csv
+sim_output/
