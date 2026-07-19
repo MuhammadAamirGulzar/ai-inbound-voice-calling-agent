@@ -137,6 +137,7 @@ class CallMetrics:
     turns: list = field(default_factory=list)  # list[TurnMetrics]
     greeting_first_audio_ms: Optional[float] = None
     stt_connect_ms: Optional[float] = None
+    stt_reconnects: int = 0
     stt_provider: str = ""
     llm_model: str = ""
     tts_provider: str = ""
@@ -163,6 +164,7 @@ class CallMetrics:
             "response_ms_max": max(responses) if responses else None,
             "greeting_first_audio_ms": self.greeting_first_audio_ms,
             "stt_connect_ms": self.stt_connect_ms,
+            "stt_reconnects": self.stt_reconnects,
             "providers": {
                 "stt": self.stt_provider,
                 "llm": self.llm_model,

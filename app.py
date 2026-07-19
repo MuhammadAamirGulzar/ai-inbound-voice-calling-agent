@@ -12,6 +12,7 @@ Assembles the FastAPI app from focused packages:
 Run: uvicorn app:app --host 0.0.0.0 --port 8000
 """
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -21,6 +22,13 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 load_dotenv()
+
+# Structured logs for the voice engine (uvicorn configures its own loggers;
+# this covers the "voice.*" hierarchy). LOG_LEVEL=DEBUG for verbose runs.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
 
 # ── Keep model/tool caches inside the project (avoids C: drive issues) ──
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -110,6 +118,18 @@ from services import rag_sidecar, reminders
 async def _startup():
     await rag_sidecar.start(app)
     reminders.start_due_date_reminder_cron()
+    # Establish the RAG circuit-breaker state before the first call so a
+    # down sidecar never costs a live caller the connect-timeout discovery.
+    import asyncio as _asyncio
+    from voice.rag import startup_probe as _rag_probe
+    app.state.rag_probe_task = _asyncio.create_task(
+        _rag_probe(os.getenv("RAG_BASE_URL", "http://127.0.0.1:8001").rstrip("/")))
+    # Keep a warm connection to the LLM provider so the first turn of any
+    # call never pays a cold TCP+TLS handshake.
+    from voice.config import VoiceConfig
+    from voice.llm import start_llm_keepalive
+    _voice_cfg = VoiceConfig.from_env()
+    start_llm_keepalive(_voice_cfg.llm_base_url, _voice_cfg.llm_api_key)
 
 
 @app.on_event("shutdown")

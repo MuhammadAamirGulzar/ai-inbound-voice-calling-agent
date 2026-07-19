@@ -26,6 +26,30 @@ DEEPGRAM_SPEAK_URL = "https://api.deepgram.com/v1/speak"
 DEEPGRAM_SPEAK_WSS = "wss://api.deepgram.com/v1/speak"
 ELEVENLABS_STREAM_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
 
+# Max silence we tolerate from the Aura speak socket before treating the
+# sentence as failed and moving to the fallback provider. Warm TTFB is
+# ~0.7 s, so 10 s only fires on a genuinely wedged connection — and 10 s of
+# dead air is already twice what a caller will sit through.
+AURA_WS_RECV_TIMEOUT_S = 10.0
+
+# One HTTP/2-keepalive client for all REST TTS calls in the process.
+# A per-call client pays a fresh TLS handshake on the first sentence of
+# every call (measured 200-400 ms) — the shared pool keeps connections warm
+# across calls. Providers therefore must NOT close it in their close().
+_shared_http: httpx.AsyncClient | None = None
+
+
+def _http_client() -> httpx.AsyncClient:
+    global _shared_http
+    if _shared_http is None or _shared_http.is_closed:
+        _shared_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=5.0),
+            limits=httpx.Limits(max_connections=100,
+                                max_keepalive_connections=20,
+                                keepalive_expiry=120.0),
+        )
+    return _shared_http
+
 
 class DeepgramAuraWS:
     """
@@ -86,7 +110,8 @@ class DeepgramAuraWS:
                 await self._ws.send(json.dumps({"type": "Speak", "text": text}))
                 await self._ws.send(json.dumps({"type": "Flush"}))
                 while True:
-                    frame = await asyncio.wait_for(self._ws.recv(), timeout=20.0)
+                    frame = await asyncio.wait_for(self._ws.recv(),
+                                                   timeout=AURA_WS_RECV_TIMEOUT_S)
                     if isinstance(frame, bytes):
                         yield frame
                     else:
@@ -122,7 +147,7 @@ class DeepgramAuraTTS:
 
     def __init__(self, config):
         self.config = config
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+        self._client = _http_client()
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         params = {
@@ -148,7 +173,7 @@ class DeepgramAuraTTS:
                     yield chunk
 
     async def close(self):
-        await self._client.aclose()
+        pass   # shared client stays warm for the next call
 
 
 class ElevenLabsTTS:
@@ -158,7 +183,7 @@ class ElevenLabsTTS:
 
     def __init__(self, config):
         self.config = config
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+        self._client = _http_client()
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         url = ELEVENLABS_STREAM_URL.format(voice_id=self.config.elevenlabs_voice_id)
@@ -183,7 +208,7 @@ class ElevenLabsTTS:
                     yield chunk
 
     async def close(self):
-        await self._client.aclose()
+        pass   # shared client stays warm for the next call
 
 
 def make_tts(config):

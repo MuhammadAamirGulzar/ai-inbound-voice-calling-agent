@@ -16,12 +16,16 @@ the transfer layer whispers to the receiving agent (warm transfer).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 import httpx
 from openai import AsyncOpenAI
+
+log = logging.getLogger("voice.llm")
 
 # One HTTP client per (endpoint, key) for the whole process. A per-call
 # client re-handshakes TLS on every turn: httpx's default keep-alive is
@@ -43,6 +47,35 @@ def _get_client(base_url: str, api_key: str) -> AsyncOpenAI:
             base_url=base_url, api_key=api_key or "none",
             http_client=http_client, timeout=30.0)
     return _shared_clients[cache_key]
+
+
+# The pool's keepalive_expiry is 120 s: without traffic the warm connection
+# dies and the next call pays a cold TCP+TLS handshake to the LLM provider
+# (measured: turn-1 TTFT 6.8 s cold vs 265 ms warm on a high-RTT link).
+# A cheap GET /models every 60 s keeps one connection warm around the
+# clock — no tokens are billed for it.
+_KEEPALIVE_INTERVAL_S = 60.0
+_keepalive_task = None
+
+
+async def _keepalive_loop(base_url: str, api_key: str):
+    client = _get_client(base_url, api_key)
+    while True:
+        try:
+            await client.models.list()
+        except Exception as e:
+            log.debug("LLM keepalive ping failed: %s", e)
+        await asyncio.sleep(_KEEPALIVE_INTERVAL_S)
+
+
+def start_llm_keepalive(base_url: str, api_key: str):
+    """Idempotent; call from app startup. Also serves as the boot-time
+    prewarm — the first ping opens the connection before the first call."""
+    global _keepalive_task
+    if not api_key:
+        return
+    if _keepalive_task is None or _keepalive_task.done():
+        _keepalive_task = asyncio.create_task(_keepalive_loop(base_url, api_key))
 
 CALL_TOOLS = [
     {

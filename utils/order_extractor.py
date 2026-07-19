@@ -8,6 +8,18 @@ from sql import crud, models
 
 logger = logging.getLogger(__name__)
 
+# One client per endpoint for the process — connection reuse across calls.
+_clients: dict = {}
+
+
+def _get_client(endpoint: str, api_key: str, timeout: float) -> OpenAI:
+    key = (endpoint, api_key)
+    if key not in _clients:
+        _clients[key] = OpenAI(base_url=endpoint, api_key=api_key,
+                               timeout=timeout, max_retries=2)
+    return _clients[key]
+
+
 def extract_order_from_transcript(chat_history: models.ChatHistory, db: Session) -> Optional[models.Order]:
     """
     Parses the conversation transcript of a completed call using the configured LLM,
@@ -72,17 +84,20 @@ Analyze this transcript:
 Output:
 """
 
-    endpoint = os.getenv("MODEL_ENDPOINT_URL", "http://localhost:11434/v1")
-    api_key = os.getenv("MODEL_API_KEY", "ollama")
-    model_name = os.getenv("MODEL_NAME", "qwen2.5vl:7b")
-    timeout = float(os.getenv("MODEL_REQUEST_TIMEOUT", "180"))
+    # Same provider resolution as the streaming voice engine (voice/config.py):
+    # cloud LLM when its keys exist, legacy MODEL_* (local Ollama) otherwise.
+    # Pointing this at MODEL_ENDPOINT_URL only meant order extraction silently
+    # dialed a dead localhost Ollama on cloud deployments.
+    endpoint = (os.getenv("LLM_BASE_URL") or os.getenv("MODEL_ENDPOINT_URL")
+                or "https://api.groq.com/openai/v1").strip()
+    api_key = (os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY")
+               or os.getenv("MODEL_API_KEY") or "ollama").strip()
+    model_name = (os.getenv("LLM_MODEL") or os.getenv("MODEL_NAME")
+                  or "llama-3.3-70b-versatile").strip()
+    timeout = float(os.getenv("MODEL_REQUEST_TIMEOUT", "30"))
 
     try:
-        client = OpenAI(
-            base_url=endpoint,
-            api_key=api_key,
-            timeout=timeout,
-        )
+        client = _get_client(endpoint, api_key, timeout)
         response = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],

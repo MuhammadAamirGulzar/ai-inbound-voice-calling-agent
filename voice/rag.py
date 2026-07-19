@@ -20,29 +20,85 @@ _CHUNK_TOP_K = 4
 # Circuit breaker: a down/hanging RAG service must not tax every turn.
 # (Measured: on Windows a refused localhost connect burns ~1.7 s — the
 # whole lookup budget — on every single turn until something gives.)
+#
+# Recovery happens OFF the hot path: once open, live turns skip RAG
+# immediately and a background probe of /health decides when to close the
+# breaker again. The old scheme ("cooldown expiry closes it") made a real
+# caller pay the ~1.7 s discovery cost twice after every cooldown.
 _BREAKER_THRESHOLD = 2
 _BREAKER_COOLDOWN_S = 30.0
+_PROBE_TIMEOUT_S = 1.0
 _consecutive_failures = 0
-_skip_until = 0.0
+_breaker_open = False
+_last_probe_at = 0.0
+_probe_task = None
 
 
 def rag_healthy() -> bool:
     """False while the breaker is open (recent consecutive failures)."""
-    return time.monotonic() >= _skip_until
+    return not _breaker_open
 
 
 def record_rag_result(ok: bool):
-    global _consecutive_failures, _skip_until
+    global _consecutive_failures, _breaker_open
     if ok:
         _consecutive_failures = 0
+        _breaker_open = False
     else:
         _consecutive_failures += 1
         if _consecutive_failures >= _BREAKER_THRESHOLD:
-            _skip_until = time.monotonic() + _BREAKER_COOLDOWN_S
+            _breaker_open = True
+
+
+async def _probe_health(base_url: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S) as client:
+            resp = await client.get(f"{base_url}/health")
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def _reprobe(base_url: str):
+    if await _probe_health(base_url):
+        record_rag_result(True)
+
+
+def _maybe_reprobe(base_url: str):
+    """Kick a background /health probe at most once per cooldown."""
+    global _last_probe_at, _probe_task
+    now = time.monotonic()
+    if now - _last_probe_at < _BREAKER_COOLDOWN_S:
+        return
+    if _probe_task is not None and not _probe_task.done():
+        return
+    _last_probe_at = now
+    _probe_task = asyncio.create_task(_reprobe(base_url))
+
+
+async def startup_probe(base_url: str, attempts: int = 6,
+                        interval_s: float = 3.0) -> bool:
+    """
+    Establish breaker state at boot, before the first call. Retries for a
+    bit to let an auto-started sidecar finish booting; if RAG stays down,
+    the breaker is opened so no caller ever pays the discovery cost.
+    """
+    for attempt in range(attempts):
+        if await _probe_health(base_url):
+            record_rag_result(True)
+            return True
+        if attempt < attempts - 1:
+            await asyncio.sleep(interval_s)
+    for _ in range(_BREAKER_THRESHOLD):
+        record_rag_result(False)
+    return False
 
 
 async def build_rag_context(config, user_text: str) -> str:
-    if not config.rag_business_id or not rag_healthy():
+    if not config.rag_business_id:
+        return ""
+    if not rag_healthy():
+        _maybe_reprobe(config.rag_base_url)
         return ""
 
     async def menu_lookup(client: httpx.AsyncClient) -> str:

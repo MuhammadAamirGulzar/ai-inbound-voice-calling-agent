@@ -230,7 +230,12 @@ def make_session(transport, llm=None, tts=None):
     session._mark_events = {}
     session._spoken_sentences = []
     session._played_marks = 0
+    session._turn_marks = set()
     session._greeted = False
+    session._greeting_task = None
+    session._stt_reconnects = 0
+    session.stt = None
+    session._make_stt = lambda: None
     return session
 
 
@@ -394,6 +399,231 @@ def test_word_error_rate():
     assert word_error_rate("Hello, there!", "hello there") == 0.0
     # insertion counts against hypothesis
     assert word_error_rate("hello there", "well hello there") == 0.5
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# production-hardening regressions
+# ─────────────────────────────────────────────────────────────────────────
+def test_fallback_line_marks_count_as_played():
+    """Marks from non-standard prefixes (fallback t{n}f, goodbye t{n}bye)
+    must count as played — otherwise the session believes it is speaking
+    forever and treats the caller's next words as a spurious barge-in."""
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport)
+        await session._speak_sentences(["Sorry, could you say that again?"],
+                                       mark_prefix="t1f", turn=None)
+        assert session._agent_audibly_speaking()   # queued, not yet played
+        session.on_mark(transport.marks[0])
+        return session
+
+    session = asyncio.run(scenario())
+    assert not session._agent_audibly_speaking()
+
+
+def test_stale_mark_from_previous_turn_not_counted():
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport)
+        await session._speak_sentences(["First reply."], mark_prefix="greet",
+                                       turn=None)
+        # New turn resets tracking; the late greet echo must not count.
+        session._spoken_sentences = []
+        session._played_marks = 0
+        session._turn_marks = set()
+        session.on_mark("greet:0")
+        return session
+
+    session = asyncio.run(scenario())
+    assert session._played_marks == 0
+
+
+def test_no_barge_in_during_ending_state():
+    """While a goodbye/transfer line plays, caller speech must not clear
+    the farewell audio."""
+    async def scenario():
+        from voice.stt import STTEvent
+        transport = FakeTransport()
+        session = make_session(transport)
+        await session._speak_sentences(["Thank you, goodbye!"],
+                                       mark_prefix="t1bye", turn=None)
+        session.state = "ending"
+        session._maybe_barge_in(STTEvent(kind="interim", text="wait wait no"))
+        await asyncio.sleep(0.05)
+        return transport
+
+    transport = asyncio.run(scenario())
+    assert transport.clears == 0
+
+
+def test_user_turn_during_ending_is_queued_not_spawned():
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport)
+        session.state = "ending"
+        session._pending_finals = ["actually one more thing"]
+        session._close_user_turn()
+        return session
+
+    session = asyncio.run(scenario())
+    assert session._respond_task is None
+    assert session._queued_user_text == "actually one more thing"
+
+
+class FakeSTT:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.started = False
+        self.finished = False
+
+    async def start(self):
+        if self.fail:
+            raise RuntimeError("connect refused")
+        self.started = True
+
+    async def finish(self):
+        self.finished = True
+
+
+def test_stt_reconnect_swaps_stream():
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport)
+        old = FakeSTT()
+        old.started = True
+        session.stt = old
+        session._make_stt = lambda: FakeSTT()
+        ok = await session._reconnect_stt()
+        return session, old, ok
+
+    session, old, ok = asyncio.run(scenario())
+    assert ok
+    assert old.finished
+    assert session.stt is not old and session.stt.started
+    assert session.metrics.stt_reconnects == 1
+
+
+def test_stt_reconnect_gives_up_after_limit():
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport)
+        session.config.stt_max_reconnects = 1
+        session.stt = FakeSTT()
+        session._make_stt = lambda: FakeSTT(fail=True)
+        ok = await session._reconnect_stt()
+        # Further attempts stay exhausted.
+        ok2 = await session._reconnect_stt()
+        return ok, ok2, session
+
+    ok, ok2, session = asyncio.run(scenario())
+    assert not ok and not ok2
+    assert session._stt_reconnects == 1
+
+
+def test_partial_tts_failure_does_not_replay_sentence():
+    """If the primary TTS dies mid-sentence after audio was already heard,
+    falling back would replay the sentence — it must truncate instead."""
+    class PartialTTS:
+        provider_name = "partial"
+
+        async def synthesize(self, text):
+            yield b"\x00" * 160
+            yield b"\x00" * 160
+            raise RuntimeError("socket dropped")
+
+        async def close(self):
+            pass
+
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport, tts=PartialTTS())
+        session.tts_fallback = FakeTTS(chunk_count=7)
+        return [c async for c in session._synthesize("hello there", None)]
+
+    chunks = asyncio.run(scenario())
+    assert len(chunks) == 2   # truncated; fallback not invoked
+
+
+def test_respond_waits_for_greeting_task():
+    async def scenario():
+        transport = FakeTransport()
+        session = make_session(transport)
+        order = []
+
+        async def fake_greeting():
+            await asyncio.sleep(0.05)
+            order.append("greeting")
+
+        session._greeting_task = asyncio.create_task(fake_greeting())
+        await session._respond("hi")
+        order.append("respond")
+        return order
+
+    order = asyncio.run(scenario())
+    assert order == ["greeting", "respond"]
+
+
+def test_voice_settings_type_coercion():
+    cfg = VoiceConfig()
+    cfg.apply_overrides({
+        "endpointing_ms": "500",           # dashboard JSON string → int
+        "barge_in_enabled": "false",
+        "rag_timeout_s": "2.5",
+        "llm_temperature": "not-a-number", # invalid → ignored
+        "llm_max_tokens": 128,
+    })
+    assert cfg.endpointing_ms == 500 and isinstance(cfg.endpointing_ms, int)
+    assert cfg.barge_in_enabled is False
+    assert cfg.rag_timeout_s == 2.5
+    assert cfg.llm_temperature == 0.2
+    assert cfg.llm_max_tokens == 128
+
+
+def test_twilio_signature_validation():
+    from telephony.twilio_security import (compute_twilio_signature,
+                                           twilio_signature_valid)
+    token = "test-auth-token"
+    url = "https://example.com/voice"
+    params = {"To": "+15550199", "From": "+15551234", "CallSid": "CA123"}
+    sig = compute_twilio_signature(token, url, params)
+    assert twilio_signature_valid(token, url, params, sig)
+    assert not twilio_signature_valid(token, url,
+                                      {**params, "To": "+15550000"}, sig)
+    assert not twilio_signature_valid(token, url, params, "")
+    assert not twilio_signature_valid("wrong-token", url, params, sig)
+
+
+def test_rag_breaker_opens_and_only_probe_closes_it():
+    """The breaker must trip after consecutive failures and stay open until
+    a probe/lookup succeeds — mere time passing reopening it made real
+    callers pay the ~1.7 s down-discovery cost after every cooldown."""
+    import voice.rag as rag
+    old = (rag._consecutive_failures, rag._breaker_open)
+    try:
+        rag._consecutive_failures, rag._breaker_open = 0, False
+        rag.record_rag_result(False)
+        assert rag.rag_healthy()          # one failure: still closed
+        rag.record_rag_result(False)
+        assert not rag.rag_healthy()      # trips at threshold
+        rag.record_rag_result(True)
+        assert rag.rag_healthy()          # success closes it again
+    finally:
+        rag._consecutive_failures, rag._breaker_open = old
+
+
+def test_stt_send_queue_never_blocks():
+    from voice.stt import DeepgramLiveSTT, _SEND_QUEUE_FRAMES
+
+    async def scenario():
+        stt = DeepgramLiveSTT(VoiceConfig(), asyncio.Queue())
+        stt._ws = object()   # pretend connected; sender task not running
+        for _ in range(_SEND_QUEUE_FRAMES + 50):
+            await stt.send_audio(b"\x00" * 160)
+        return stt
+
+    stt = asyncio.run(scenario())
+    assert stt._dropped_frames == 50
+    assert stt._send_q.qsize() == _SEND_QUEUE_FRAMES
 
 
 def test_barge_in_during_buffered_playback():

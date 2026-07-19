@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
 import time
 from typing import Optional
@@ -43,9 +44,12 @@ from .telemetry import telemetry
 from .transfer import TwilioCallControl
 from .tts import make_tts, make_fallback_tts
 
+log = logging.getLogger("voice.pipeline")
+
 FALLBACK_LINE = "Sorry, I'm having a little trouble right now. Could you say that again?"
 TRANSFER_LINE = "Sure, let me connect you with a member of our team. One moment please."
 TRANSFER_FAILED_LINE = "I'm sorry, I couldn't reach a team member right now. Is there anything else I can help you with?"
+STT_DOWN_LINE = "I'm sorry, we're having technical difficulties right now. Please call back in a few minutes."
 
 
 class TwilioTransport:
@@ -97,7 +101,8 @@ class CallSession:
         ]
 
         self.stt_events: asyncio.Queue = asyncio.Queue()
-        self.stt = DeepgramLiveSTT(config, self.stt_events)
+        self._make_stt = lambda: DeepgramLiveSTT(config, self.stt_events)
+        self.stt = self._make_stt()
         self.llm = StreamingLLM(config)
         self.tts = make_tts(config)
         self.tts_fallback = make_fallback_tts(config, self.tts)
@@ -113,17 +118,27 @@ class CallSession:
         self._mark_events: dict[str, asyncio.Event] = {}
         self._spoken_sentences: list[str] = []   # current turn, queued order
         self._played_marks = 0                   # current turn, confirmed played
+        self._turn_marks: set[str] = set()       # mark names of the current reply
         self._greeted = False
+        self._greeting_task: Optional[asyncio.Task] = None
+        self._stt_reconnects = 0
 
     # ── inbound hooks (called by the route) ──────────────────────────────
     async def feed_audio(self, mulaw_bytes: bytes):
         await self.stt.send_audio(mulaw_bytes)
 
     def on_mark(self, name: str):
-        event = self._mark_events.get(name)
+        # Popping keeps the dict bounded on long calls; a waiter that
+        # already grabbed the Event still gets woken by set().
+        event = self._mark_events.pop(name, None)
         if event:
             event.set()
-        if name.startswith(f"t{self._turn_seq}:") or name.startswith("greet:"):
+        # Count playback only for marks belonging to the reply currently
+        # tracked in _spoken_sentences. Matching by exact name (not prefix)
+        # covers fallback/transfer/goodbye lines and ignores marks Twilio
+        # echoes late for a reply we already reset.
+        if name in self._turn_marks:
+            self._turn_marks.discard(name)
             self._played_marks += 1
 
     # ── lifecycle ────────────────────────────────────────────────────────
@@ -138,18 +153,30 @@ class CallSession:
         if hasattr(self.tts, "prewarm"):
             asyncio.create_task(self.tts.prewarm())
         greeting = asyncio.create_task(self._speak_greeting(started))
+        self._greeting_task = greeting
         try:
             await self.stt.start()
         except Exception:
             # One retry for transient connect failures, then give up cleanly.
             await asyncio.sleep(0.5)
             try:
+                self.stt = self._make_stt()
                 await self.stt.start()
             except Exception:
                 self.metrics.disconnect_reason = "stt_connect_failed"
                 telemetry.provider_error("stt")
                 greeting.cancel()
                 watchdog.cancel()
+                # Best effort: tell the caller instead of dead air, and end
+                # the call deterministically rather than waiting for Twilio.
+                try:
+                    await asyncio.wait_for(self._speak_sentences(
+                        [STT_DOWN_LINE], mark_prefix="err", turn=None), timeout=5.0)
+                    await self._wait_for_mark("err:0", timeout=8.0)
+                except Exception:
+                    pass
+                if self.call_sid and self.control.enabled:
+                    await self.control.hangup(self.call_sid)
                 self.ended.set()
                 return
         self.metrics.stt_connect_ms = round(
@@ -174,7 +201,10 @@ class CallSession:
                         self._close_user_turn()
                 elif event.kind in ("closed", "error"):
                     if event.kind == "error":
-                        print(f"[voice] STT error: {event.text}")
+                        log.warning("STT error: %s", event.text)
+                    if (not self.ended.is_set() and self.state != "ending"
+                            and await self._reconnect_stt()):
+                        continue
                     if not self.metrics.disconnect_reason:
                         self.metrics.disconnect_reason = event.kind
                     break
@@ -182,6 +212,38 @@ class CallSession:
             watchdog.cancel()
             greeting.cancel()
             await self.shutdown()
+
+    async def _reconnect_stt(self) -> bool:
+        """
+        Survive a mid-call Deepgram drop: a transient WS failure used to
+        end the whole call; instead we swap in a fresh STT stream (audio
+        during the gap is lost — the caller repeats a word at worst).
+        """
+        while self._stt_reconnects < self.config.stt_max_reconnects:
+            self._stt_reconnects += 1
+            self.metrics.stt_reconnects = self._stt_reconnects
+            try:
+                await self.stt.finish()
+            except Exception:
+                pass
+            # Drop events queued by the dead socket (its trailing "closed",
+            # stale partials) so they can't trigger another reconnect.
+            while not self.stt_events.empty():
+                try:
+                    self.stt_events.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            self.stt = self._make_stt()
+            try:
+                await self.stt.start()
+                log.info("STT reconnected (attempt %d)", self._stt_reconnects)
+                return True
+            except Exception as e:
+                telemetry.provider_error("stt")
+                log.warning("STT reconnect attempt %d failed: %s",
+                            self._stt_reconnects, e)
+                await asyncio.sleep(0.3)
+        return False
 
     async def shutdown(self):
         # shutdown() can be invoked from both run() and the route's finally.
@@ -191,7 +253,8 @@ class CallSession:
         self.ended.set()
         if self._respond_task and not self._respond_task.done():
             self._respond_task.cancel()
-        await self.stt.finish()
+        if self.stt is not None:
+            await self.stt.finish()
         try:
             await self.tts.close()
             if self.tts_fallback:
@@ -212,9 +275,11 @@ class CallSession:
         self._pending_finals.clear()
         if not user_text:
             return
-        if self.state == "responding":
-            # Barge-in disabled (or filtered) and the caller kept talking:
-            # queue the text; it merges into the next turn.
+        if self.state in ("responding", "ending"):
+            # Responding: barge-in disabled (or filtered) and the caller
+            # kept talking — queue the text; it merges into the next turn.
+            # Ending: a transfer/goodbye is in flight — starting a second
+            # respond task here would interleave two replies.
             self._queued_user_text = (self._queued_user_text + " " + user_text).strip()
             return
         if self._queued_user_text:
@@ -233,6 +298,10 @@ class CallSession:
                 or self._played_marks < len(self._spoken_sentences))
 
     def _maybe_barge_in(self, event: STTEvent):
+        if self.state == "ending":
+            # Transfer/goodbye in flight: interrupting now would clear the
+            # farewell audio and the call would end in silence anyway.
+            return
         if not self.config.barge_in_enabled or not self._agent_audibly_speaking():
             return
         if event.kind in ("interim", "final"):
@@ -250,6 +319,8 @@ class CallSession:
         self.state = "listening"
         if mid_response and self._respond_task and not self._respond_task.done():
             self._respond_task.cancel()
+        if self._greeting_task and not self._greeting_task.done():
+            self._greeting_task.cancel()
         # Snapshot BEFORE clearing: Twilio may flush queued marks on clear,
         # which must not count as "the caller heard this". Turn flags are
         # set before the first await so the cancelled respond task's
@@ -279,8 +350,9 @@ class CallSession:
             await self.transport.send_clear()
         except Exception:
             pass
-        print(f"[voice] barge-in ({'mid-response' if mid_response else 'during playback'}): "
-              f"cleared after {len(played)}/{queued_count} sentences")
+        log.info("barge-in (%s): cleared after %d/%d sentences",
+                 "mid-response" if mid_response else "during playback",
+                 len(played), queued_count)
 
     # ── speaking ─────────────────────────────────────────────────────────
     async def _speak_greeting(self, session_start: float):
@@ -298,15 +370,15 @@ class CallSession:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            print(f"[voice] greeting failed: {e}")
+            log.warning("greeting failed: %s", e)
 
     async def _synthesize(self, sentence: str, turn: Optional[TurnMetrics]):
         """Yield audio chunks, falling back to the secondary TTS provider."""
         providers = [self.tts] + ([self.tts_fallback] if self.tts_fallback else [])
         last_error = None
         for provider in providers:
+            got_audio = False
             try:
-                got_audio = False
                 async for chunk in provider.synthesize(sentence):
                     if not got_audio:
                         got_audio = True
@@ -319,8 +391,14 @@ class CallSession:
                 raise
             except Exception as e:
                 last_error = e
+                log.warning("TTS %s failed: %s", provider.provider_name, e)
+                if got_audio:
+                    # The caller already heard part of this sentence;
+                    # re-synthesizing it on the fallback would replay it.
+                    # Truncate this sentence and move on.
+                    telemetry.provider_error("tts")
+                    return
                 telemetry.tts_fallback()
-                print(f"[voice] TTS {provider.provider_name} failed: {e}")
         if last_error:
             telemetry.provider_error("tts")
             raise last_error
@@ -332,6 +410,7 @@ class CallSession:
         for idx, sentence in enumerate(sentences):
             mark_name = f"{mark_prefix}:{idx}"
             self._mark_events[mark_name] = asyncio.Event()
+            self._turn_marks.add(mark_name)
             self._spoken_sentences.append(sentence)
             async for chunk in self._synthesize(sentence, turn):
                 if first_frame_at is None:
@@ -358,9 +437,16 @@ class CallSession:
         seq = self._turn_seq
         self._spoken_sentences = []
         self._played_marks = 0
+        self._turn_marks = set()
+
+        # If the greeting is still being synthesized (caller spoke over
+        # it with barge-in filtered), let it finish sending first so two
+        # replies never interleave frames on the same stream.
+        if self._greeting_task and not self._greeting_task.done():
+            await asyncio.wait({self._greeting_task}, timeout=10.0)
 
         turn = self.metrics.new_turn(user_text, self.config.endpointing_ms)
-        print(f"[voice] turn {turn.turn_index} user: {user_text!r}")
+        log.info("turn %d user: %r", turn.turn_index, user_text)
 
         completed = False
         try:
@@ -380,6 +466,7 @@ class CallSession:
                 nonlocal sentence_idx
                 mark_name = f"t{seq}:{sentence_idx}"
                 self._mark_events[mark_name] = asyncio.Event()
+                self._turn_marks.add(mark_name)
                 self._spoken_sentences.append(sentence)
                 async for chunk in self._synthesize(sentence, turn):
                     if turn.t_first_audio_sent is None:
@@ -400,7 +487,7 @@ class CallSession:
                     tool_calls.append(event)
                 elif event.kind == "error":
                     turn.error = f"llm: {event.text}"
-                    print(f"[voice] LLM error: {event.text}")
+                    log.warning("LLM error: %s", event.text)
             turn.mark_llm_done()
 
             if turn.error and not full_reply and not tool_calls:
@@ -422,28 +509,32 @@ class CallSession:
                 elif call.tool_name == "end_call":
                     await self._do_end_call(call.tool_args, seq)
 
-            self.state = "listening"
+            if self.state != "ending":   # keep a transfer/hangup in flight
+                self.state = "listening"
             completed = True
         except asyncio.CancelledError:
             # Barge-in path; _barge_in() owns state and history cleanup.
             raise
         except Exception as e:
             turn.error = turn.error or str(e)
-            print(f"[voice] respond failed: {e}")
+            log.exception("respond failed: %s", e)
             try:
                 await self._speak_sentences([FALLBACK_LINE],
                                             mark_prefix=f"t{seq}f", turn=turn)
             except Exception:
                 pass
-            self.state = "listening"
+            if self.state != "ending":
+                self.state = "listening"
             completed = True
         finally:
             telemetry.record_turn(turn)
             # A turn that closed while we were speaking (barge-in filtered
             # or disabled) would otherwise sit queued forever: answer it
             # now. Skipped on cancellation — the caller is still talking
-            # and their next endpoint will merge the queued text.
-            if completed and self._queued_user_text and not self.ended.is_set():
+            # and their next endpoint will merge the queued text — and when
+            # the call is ending (transfer/goodbye already spoken).
+            if (completed and self._queued_user_text
+                    and not self.ended.is_set() and self.state != "ending"):
                 queued = self._queued_user_text
                 self._queued_user_text = ""
                 self._respond_task = asyncio.create_task(self._respond(queued))
@@ -452,7 +543,7 @@ class CallSession:
     async def _do_transfer(self, args: dict, seq: int):
         target = self.config.transfer_number
         summary = args.get("summary", "")
-        print(f"[voice] transfer requested: {args.get('reason', '')!r}")
+        log.info("transfer requested: %r", args.get("reason", ""))
         if not target or not self.control.enabled or not self.call_sid:
             await self._speak_sentences([TRANSFER_FAILED_LINE],
                                         mark_prefix=f"t{seq}x", turn=None)

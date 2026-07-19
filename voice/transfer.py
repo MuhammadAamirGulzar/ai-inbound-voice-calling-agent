@@ -20,10 +20,13 @@ loop is never blocked while holding dozens of live calls.
 
 from __future__ import annotations
 
+import logging
 import urllib.parse
 from xml.sax.saxutils import escape
 
 import httpx
+
+log = logging.getLogger("voice.transfer")
 
 TWILIO_API = "https://api.twilio.com/2010-04-01"
 
@@ -44,12 +47,12 @@ class TwilioCallControl:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(url, data={"Twiml": twiml}, auth=auth)
             if resp.status_code >= 300:
-                print(f"[transfer] Twilio call update failed "
-                      f"{resp.status_code}: {resp.text[:200]}")
+                log.warning("Twilio call update failed %s: %s",
+                            resp.status_code, resp.text[:200])
                 return False
             return True
         except Exception as e:
-            print(f"[transfer] Twilio call update error: {e}")
+            log.warning("Twilio call update error: %s", e)
             return False
 
     def build_transfer_twiml(self, target_number: str, summary: str = "") -> str:

@@ -17,6 +17,7 @@ Selection: VOICE_PIPELINE env = auto (default) | streaming | legacy.
 import asyncio
 import base64
 import json
+import logging
 import os
 import time
 import urllib.parse
@@ -24,15 +25,29 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from twilio.twiml.voice_response import VoiceResponse, Connect
 
 from sql.database import SessionLocal
 from sql import models
+from telephony.twilio_security import twilio_signature_valid
 from voice.config import VoiceConfig
 from voice.pipeline import CallSession, TwilioTransport
+from voice.telemetry import telemetry
+
+log = logging.getLogger("voice.twilio")
 
 router = APIRouter()
+
+# Keep references to fire-and-forget DB tasks so they aren't GC'd mid-run.
+_background_tasks: set = set()
+
+
+def _spawn_background(coro):
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are the friendly AI voice agent taking phone orders for a "
@@ -55,6 +70,34 @@ def resolve_restaurants_for_call(to_number: str, db) -> list:
 # ─────────────────────────────────────────────────────────────────────────
 # Incoming-call webhook → TwiML that opens the media stream
 # ─────────────────────────────────────────────────────────────────────────
+def _webhook_url_for_signature(request: Request) -> str:
+    """The URL Twilio signed. Behind a proxy/tunnel the request URL is the
+    internal one, so prefer PUBLIC_BASE_URL when configured."""
+    base = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if base:
+        url = base + request.url.path
+        if request.url.query:
+            url += "?" + request.url.query
+        return url
+    return str(request.url)
+
+
+def _lookup_call_routing(to_number: str) -> dict:
+    """Runs in a worker thread — plain values only, no live ORM objects."""
+    db = SessionLocal()
+    try:
+        restaurants = resolve_restaurants_for_call(to_number, db)
+        agent_config = restaurants[0].agent_configuration if restaurants else None
+        return {
+            "found": bool(restaurants),
+            "all_suspended": bool(restaurants)
+                             and all(r.is_suspended for r in restaurants),
+            "agent_paused": agent_config is not None and not agent_config.is_active,
+        }
+    finally:
+        db.close()
+
+
 @router.post("/voice")
 async def voice(request: Request):
     """
@@ -65,28 +108,47 @@ async def voice(request: Request):
     to_number = form_data.get("To", "")
     caller_number = form_data.get("From", "")
 
-    db = SessionLocal()
-    restaurants = []
-    try:
-        restaurants = resolve_restaurants_for_call(to_number, db)
-        if not restaurants:
-            print(f"WARNING: resolve_restaurants_for_call('{to_number}') returned zero matches in voice webhook.")
-    except Exception as e:
-        print(f"Error querying restaurants in voice webhook: {e}")
-    finally:
-        db.close()
+    # Reject non-Twilio requests when signature validation is enabled.
+    if os.getenv("TWILIO_VALIDATE_SIGNATURE", "").lower() in ("1", "true", "yes"):
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+        signature = request.headers.get("X-Twilio-Signature", "")
+        if not twilio_signature_valid(auth_token,
+                                      _webhook_url_for_signature(request),
+                                      dict(form_data), signature):
+            log.warning("rejected /voice request with bad Twilio signature")
+            return Response(status_code=403)
 
     response = VoiceResponse()
 
-    # Check if ALL matching restaurants are suspended. If so, reject the call.
-    if restaurants and all(r.is_suspended for r in restaurants):
-        print("Call rejected: All matching restaurants are suspended.")
+    # Load shedding: past capacity, a fast busy message beats 50 calls all
+    # getting 8-second responses.
+    max_calls = int(os.getenv("MAX_CONCURRENT_CALLS", "0") or 0)
+    if max_calls and telemetry.calls_active >= max_calls:
+        log.warning("at capacity (%d active) — rejecting call politely",
+                    telemetry.calls_active)
+        response.say("We are sorry, all of our lines are busy right now. "
+                     "Please call again in a few minutes.")
+        response.hangup()
+        return HTMLResponse(content=str(response), media_type="application/xml")
+
+    # DB lookup runs off the event loop: this handler shares the loop with
+    # every live call's audio. A DB hiccup must not reject calls either —
+    # fail open and let the stream handler sort out tenant config.
+    try:
+        routing = await asyncio.to_thread(_lookup_call_routing, to_number)
+        if not routing["found"]:
+            log.warning("no restaurant matches To=%s in voice webhook", to_number)
+    except Exception as e:
+        log.error("routing lookup failed (%s) — accepting call anyway", e)
+        routing = {"found": False, "all_suspended": False, "agent_paused": False}
+
+    if routing["all_suspended"]:
+        log.info("call rejected: all matching restaurants suspended")
         response.say("We are sorry, this service is temporarily unavailable. Goodbye.")
         return HTMLResponse(content=str(response), media_type="application/xml")
 
-    # Check if the AI voice agent is manually paused
-    if restaurants and restaurants[0].agent_configuration and not restaurants[0].agent_configuration.is_active:
-        print("Agent is paused. Hanging up call.")
+    if routing["agent_paused"]:
+        log.info("agent is paused — hanging up call")
         response.say("Thank you for calling. The restaurant's AI assistant is currently offline. Goodbye.")
         response.hangup()
         return HTMLResponse(content=str(response), media_type="application/xml")
@@ -100,7 +162,7 @@ async def voice(request: Request):
     to_number_encoded = urllib.parse.quote(to_number or "")
     ws_url = f"{scheme}://{host}/twilio-media-stream?caller_number={caller_number_encoded}&to_number={to_number_encoded}"
 
-    print(f"Connecting Twilio call to WebSocket URL: {ws_url}")
+    log.info("connecting Twilio call to media stream at %s", ws_url)
 
     connect.stream(url=ws_url)
     response.append(connect)
@@ -133,7 +195,7 @@ async def twilio_media_stream(
     to_number: Optional[str] = None,
 ):
     await websocket.accept()
-    print(f"Twilio Media Stream WebSocket Connected (Caller: {caller_number}, To: {to_number}).")
+    log.info("media stream connected (caller=%s, to=%s)", caller_number, to_number)
 
     config = VoiceConfig.from_env()
     mode = os.getenv("VOICE_PIPELINE", "auto").strip().lower()
@@ -143,8 +205,8 @@ async def twilio_media_stream(
         await run_streaming_call(websocket, config, caller_number or "", to_number or "")
     else:
         if mode == "auto":
-            print("[voice] cloud keys missing (DEEPGRAM_API_KEY / GROQ_API_KEY) — "
-                  "falling back to legacy local pipeline.")
+            log.warning("cloud keys missing (DEEPGRAM_API_KEY / GROQ_API_KEY) — "
+                        "falling back to legacy local pipeline")
         from telephony.legacy import run_legacy_call
         await run_legacy_call(websocket, caller_number, to_number,
                               resolve_restaurants_for_call)
@@ -216,7 +278,7 @@ def _create_call_logs(stream_sid: str, to_number: str, caller_number: str):
             ))
         db.commit()
     except Exception as e:
-        print(f"Error creating call_logs rows on start: {e}")
+        log.error("error creating call_logs rows on start: %s", e)
         db.rollback()
     finally:
         db.close()
@@ -232,7 +294,8 @@ def _finalize_call(stream_sid: str, to_number: str, duration_seconds: int,
             r.used_minutes += duration_minutes
             if r.used_minutes >= r.assigned_minutes:
                 r.is_suspended = True
-                print(f"Restaurant '{r.name}' exceeded its quota — auto-suspending.")
+                log.warning("restaurant '%s' exceeded its quota — auto-suspending",
+                            r.name)
 
         user_spoke = any(m.get("role") == "user" for m in messages)
         final_status = "failed" if call_failed else (
@@ -245,23 +308,24 @@ def _finalize_call(stream_sid: str, to_number: str, duration_seconds: int,
 
         logs = db.query(models.ChatHistory).filter(
             models.ChatHistory.session_id == stream_sid).all()
-        for log in logs:
-            log.chat_data = [m for m in messages if m.get("role") != "system"]
-            log.duration_seconds = duration_seconds
-            log.status = final_status
+        for log_row in logs:
+            log_row.chat_data = [m for m in messages if m.get("role") != "system"]
+            log_row.duration_seconds = duration_seconds
+            log_row.status = final_status
             if avg_response is not None:
-                log.response_time = avg_response
-            if hasattr(log, "metrics"):
-                log.metrics = metrics_dict
+                log_row.response_time = avg_response
+            if hasattr(log_row, "metrics"):
+                log_row.metrics = metrics_dict
             if final_status == "completed":
                 from utils.order_extractor import extract_order_from_transcript
                 try:
-                    extract_order_from_transcript(log, db)
+                    extract_order_from_transcript(log_row, db)
                 except Exception as parse_err:
-                    print(f"Error auto-extracting order from call transcript: {parse_err}")
+                    log.error("error auto-extracting order from transcript: %s",
+                              parse_err)
         db.commit()
     except Exception as e:
-        print(f"Error updating call logs/minutes: {e}")
+        log.error("error updating call logs/minutes: %s", e)
         db.rollback()
     finally:
         db.close()
@@ -285,9 +349,15 @@ async def run_streaming_call(websocket: WebSocket, config: VoiceConfig,
         call_sid = start.get("callSid", "")
         call_start = time.time()
         active_connections[stream_sid] = websocket
-        print(f"[voice] stream started sid={stream_sid} call={call_sid}")
+        log.info("stream started sid=%s call=%s", stream_sid, call_sid)
 
-        settings = await asyncio.to_thread(_load_agent_settings, to_number)
+        # Tenant config comes from the DB, but a DB hiccup must not kill a
+        # live call — degrade to the default prompt/voice instead.
+        try:
+            settings = await asyncio.to_thread(_load_agent_settings, to_number)
+        except Exception as e:
+            log.error("agent settings lookup failed (%s) — using defaults", e)
+            settings = {}
         config.system_prompt = settings.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
         config.apply_overrides(settings.get("voice_settings"))
         if settings.get("restaurant_id") and not config.rag_business_id:
@@ -295,8 +365,10 @@ async def run_streaming_call(websocket: WebSocket, config: VoiceConfig,
         config.greeting = await _fetch_greeting(
             config, settings.get("restaurant_name", ""), config.rag_business_id)
 
-        await asyncio.to_thread(_create_call_logs, stream_sid, to_number,
-                                caller_number)
+        # Call-log rows aren't needed until the call ends — write them in
+        # the background instead of delaying the greeting on DB latency.
+        _spawn_background(asyncio.to_thread(
+            _create_call_logs, stream_sid, to_number, caller_number))
 
         transport = TwilioTransport(websocket, stream_sid)
         session = CallSession(config, transport, call_sid=call_sid,
@@ -335,14 +407,14 @@ async def run_streaming_call(websocket: WebSocket, config: VoiceConfig,
             elif event == "connected":
                 pass
             elif event == "stop":
-                print("[voice] stop event received")
+                log.info("stop event received")
                 break
             receive_task = asyncio.create_task(websocket.receive_text())
     except WebSocketDisconnect:
-        print("[voice] media stream disconnected")
+        log.info("media stream disconnected")
     except Exception as e:
         call_failed = True
-        print(f"[voice] media stream error: {e}")
+        log.exception("media stream error: %s", e)
     finally:
         receive_task.cancel()
         if ended_task is not None:
@@ -351,13 +423,17 @@ async def run_streaming_call(websocket: WebSocket, config: VoiceConfig,
             await session.shutdown()
         if session_task is not None:
             session_task.cancel()
+            try:
+                await asyncio.wait_for(session_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
         if stream_sid:
             active_connections.pop(stream_sid, None)
 
         if session is not None and call_start is not None:
             duration = int(time.time() - call_start)
             metrics_dict = session.metrics.to_dict()
-            print(session.metrics.log_line())
+            log.info("%s", session.metrics.log_line())
             await asyncio.to_thread(
                 _finalize_call, stream_sid, to_number, duration,
                 session.messages, metrics_dict, call_failed)

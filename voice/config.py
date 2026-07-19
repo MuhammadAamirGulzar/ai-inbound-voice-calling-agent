@@ -53,6 +53,9 @@ class VoiceConfig:
     # Word-gap fallback finalization for noisy endings.
     utterance_end_ms: int = 1000
     stt_keywords: str = ""  # comma-separated boost terms (menu items, names)
+    # Mid-call Deepgram WS drops: how many fresh streams to try before
+    # giving up on the call.
+    stt_max_reconnects: int = 2
 
     # ── TTS tuning ───────────────────────────────────────────────────────
     tts_voice: str = "aura-asteria-en"        # aura-1: ~3x lower TTFB than aura-2 (measured)
@@ -131,13 +134,32 @@ class VoiceConfig:
         return cfg
 
     def apply_overrides(self, overrides: dict | None) -> "VoiceConfig":
-        """Apply a per-tenant voice_settings dict (unknown keys ignored)."""
+        """
+        Apply a per-tenant voice_settings dict. Unknown keys are ignored;
+        values are coerced to the field's type ("500" → 500) because the
+        settings arrive as dashboard-edited JSON. Values that can't be
+        coerced are skipped rather than poisoning the call at runtime.
+        """
         if not overrides:
             return self
         valid = {f.name for f in fields(self)}
         for key, value in overrides.items():
-            if key in valid and value not in (None, ""):
-                setattr(self, key, value)
+            if key not in valid or value in (None, ""):
+                continue
+            current = getattr(self, key)
+            try:
+                if isinstance(current, bool):
+                    if isinstance(value, str):
+                        value = value.strip().lower() in ("1", "true", "yes", "on")
+                    else:
+                        value = bool(value)
+                elif isinstance(current, int):
+                    value = int(value)
+                elif isinstance(current, float):
+                    value = float(value)
+            except (TypeError, ValueError):
+                continue
+            setattr(self, key, value)
         return self
 
     @property

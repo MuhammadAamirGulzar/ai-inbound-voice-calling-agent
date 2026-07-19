@@ -22,12 +22,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import urllib.parse
 from dataclasses import dataclass
 
 import websockets
 
+log = logging.getLogger("voice.stt")
+
 DEEPGRAM_WSS = "wss://api.deepgram.com/v1/listen"
+
+# Outbound audio buffer: ~5 s of 20 ms Twilio frames. If Deepgram's socket
+# stalls longer than that, old frames are dropped to stay realtime.
+_SEND_QUEUE_FRAMES = 256
 
 
 @dataclass
@@ -45,6 +52,8 @@ class DeepgramLiveSTT:
         self._ws = None
         self._tasks: list[asyncio.Task] = []
         self._closed = False
+        self._send_q: asyncio.Queue = asyncio.Queue(maxsize=_SEND_QUEUE_FRAMES)
+        self._dropped_frames = 0
 
     def _build_url(self) -> str:
         params = {
@@ -80,17 +89,44 @@ class DeepgramLiveSTT:
             raise
         self._tasks.append(asyncio.create_task(self._receiver()))
         self._tasks.append(asyncio.create_task(self._keepalive()))
+        self._tasks.append(asyncio.create_task(self._sender()))
 
     async def send_audio(self, mulaw_bytes: bytes):
-        if self._ws is not None and not self._closed:
+        """
+        Non-blocking enqueue. The actual socket send happens in _sender(),
+        so a slow/stalled Deepgram connection can never back-pressure the
+        Twilio receive loop (which also carries mark/stop events for every
+        live call). On overflow the oldest frame is dropped — staying
+        realtime beats perfect audio for a phone conversation.
+        """
+        if self._ws is None or self._closed:
+            return
+        try:
+            self._send_q.put_nowait(mulaw_bytes)
+        except asyncio.QueueFull:
+            self._dropped_frames += 1
             try:
-                await self._ws.send(mulaw_bytes)
-            except Exception:
-                if not self._closed:
-                    await self.events.put(STTEvent(kind="error", text="deepgram send failed"))
+                self._send_q.get_nowait()
+                self._send_q.put_nowait(mulaw_bytes)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
+
+    async def _sender(self):
+        try:
+            while not self._closed:
+                data = await self._send_q.get()
+                await self._ws.send(data)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if not self._closed:
+                await self.events.put(STTEvent(kind="error", text="deepgram send failed"))
 
     async def finish(self):
         self._closed = True
+        if self._dropped_frames:
+            log.warning("dropped %d audio frames (slow Deepgram socket)",
+                        self._dropped_frames)
         if self._ws is not None:
             try:
                 await self._ws.send(json.dumps({"type": "CloseStream"}))
