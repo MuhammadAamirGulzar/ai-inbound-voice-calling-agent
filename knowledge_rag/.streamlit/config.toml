@@ -1,0 +1,15 @@
+# Streamlit runtime settings for the Knowledge Console.
+#
+# fileWatcherType = "none" — the ingestion pipeline writes files under
+# data/raw/ and data/processed/ as part of normal operation. Streamlit's
+# default file watcher restarts the whole app whenever a file changes
+# inside the project directory, which would otherwise interrupt an
+# in-progress ingestion. This is also set via an environment variable at
+# the top of scripts/knowledge_console.py as a second safety net.
+[server]
+fileWatcherType = "none"
+maxUploadSize = 50
+runOnSave = false
+
+[browser]
+gatherUsageStats = false

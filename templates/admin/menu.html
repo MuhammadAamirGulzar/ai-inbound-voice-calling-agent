@@ -1,0 +1,1261 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'menu' %}
+{% block title %}Menu & Knowledge Base - OrderSaathi{% endblock %}
+
+{% block extra_js %}
+<script>
+  // ─── Globals ─────────────────────────────────────────────────────────────────
+  const RAG_BASE = "/rag";
+  const BUSINESS_ID = "{{ business_id }}";
+  let currentRecord = null;
+  let ingestionPollTimer = null;
+  let qaHistory = [];
+
+  // ─── Toast ────────────────────────────────────────────────────────────────────
+  function showToast(msg, isError = false) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.backgroundColor = isError ? 'var(--danger)' : 'var(--success)';
+    t.style.visibility = 'visible'; t.style.opacity = '1';
+    setTimeout(() => { t.style.visibility = 'hidden'; t.style.opacity = '0'; }, 3500);
+  }
+
+  // ─── Intake mode toggle ───────────────────────────────────────────────────────
+  function switchIntakeMode(mode) {
+    document.getElementById('intake-upload-panel').style.display = mode === 'upload' ? '' : 'none';
+    document.getElementById('intake-text-panel').style.display = mode === 'text' ? '' : 'none';
+    document.getElementById('tab-upload').classList.toggle('active', mode === 'upload');
+    document.getElementById('tab-text').classList.toggle('active', mode === 'text');
+  }
+
+  // ─── File Upload / Drag-Drop ──────────────────────────────────────────────────
+  const fileInput = document.getElementById('file-input-rag');
+  const dropZone = document.getElementById('drop-zone');
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) startFileIngestion(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => { if (e.target.files.length) startFileIngestion(e.target.files[0]); });
+
+  function startFileIngestion(file) {
+    const allowed = ['text/plain', 'application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+    if (!allowed.includes(file.type) && !file.name.match(/\.(txt|pdf|png|jpg|jpeg|webp)$/i)) {
+      showToast('Unsupported file type.', true); return;
+    }
+    document.getElementById('selected-file-info').style.display = 'block';
+    document.getElementById('selected-file-info').innerHTML = `<i class="fa-solid fa-file mr-2"></i><strong>${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB) — uploading…`;
+    showIngestionProgress(true);
+    const fd = new FormData();
+    fd.append('business_id', BUSINESS_ID);
+    fd.append('file', file);
+    fetch(`${RAG_BASE}/ingest`, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(data => {
+        showIngestionProgress(false);
+        document.getElementById('selected-file-info').style.display = 'none';
+        if (data.detail) { showToast('Ingestion error: ' + data.detail, true); return; }
+        currentRecord = data;
+        showToast('Ingestion complete! Review the extracted data below.');
+        renderReviewCard(data);
+        loadReviews();
+      })
+      .catch(err => { showIngestionProgress(false); showToast('Network error: ' + err.message, true); });
+  }
+
+  function ingestText() {
+    const text = document.getElementById('paste-text').value.trim();
+    if (!text) { showToast('Please paste some text first.', true); return; }
+    const label = document.getElementById('paste-label').value.trim() || 'pasted_text';
+    showIngestionProgress(true);
+    const btn = document.getElementById('ingest-text-btn');
+    btn.disabled = true;
+    fetch(`${RAG_BASE}/ingest-text`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: BUSINESS_ID, text, source_name: label })
+    })
+      .then(r => r.json())
+      .then(data => {
+        showIngestionProgress(false); btn.disabled = false;
+        if (data.detail) { showToast('Ingestion error: ' + data.detail, true); return; }
+        currentRecord = data;
+        document.getElementById('paste-text').value = '';
+        showToast('Ingestion complete! Review the extracted data below.');
+        renderReviewCard(data);
+        loadReviews();
+      })
+      .catch(err => { showIngestionProgress(false); btn.disabled = false; showToast('Network error: ' + err.message, true); });
+  }
+
+  function showIngestionProgress(show) {
+    document.getElementById('ingestion-progress').style.display = show ? '' : 'none';
+    if (show) {
+      let w = 20;
+      clearInterval(ingestionPollTimer);
+      ingestionPollTimer = setInterval(() => { w = Math.min(w + 3, 90); document.getElementById('ingestion-progress-bar').style.width = w + '%'; }, 800);
+    } else {
+      clearInterval(ingestionPollTimer);
+      document.getElementById('ingestion-progress-bar').style.width = '100%';
+      setTimeout(() => document.getElementById('ingestion-progress-bar').style.width = '0%', 500);
+    }
+  }
+
+  // ─── Reviews ──────────────────────────────────────────────────────────────────
+  function loadReviews() {
+    const listEl = document.getElementById('reviews-list');
+    const loadEl = document.getElementById('reviews-loading');
+    const emptyEl = document.getElementById('reviews-empty');
+    listEl.innerHTML = ''; loadEl.style.display = ''; emptyEl.style.display = 'none';
+    fetch(`${RAG_BASE}/businesses/${BUSINESS_ID}/reviews`)
+      .then(r => r.json())
+      .then(data => {
+        loadEl.style.display = 'none';
+        const items = data.pending || [];
+        if (!items.length) { emptyEl.style.display = ''; return; }
+        items.forEach(rec => {
+          const div = document.createElement('div');
+          div.className = 'pending-review-item';
+          div.innerHTML = `<div><i class="fa-solid fa-file-lines mr-2" style="color:var(--primary);"></i><strong>${esc(rec.source_file)}</strong> <span class="status-pill ${pillClass(rec.status)}" style="margin-left:8px;">${pillLabel(rec.status)}</span></div><div style="font-size:12px;color:var(--text-secondary);">${esc(rec.ingestion_id)}</div>`;
+          div.addEventListener('click', () => {
+            document.querySelectorAll('.pending-review-item').forEach(d => d.classList.remove('selected'));
+            div.classList.add('selected');
+            currentRecord = rec;
+            renderReviewCard(rec);
+          });
+          listEl.appendChild(div);
+        });
+      })
+      .catch(() => { loadEl.style.display = 'none'; });
+  }
+
+  function pillClass(s) { return s === 'published' ? 'pill-published' : s === 'rejected' ? 'pill-rejected' : 'pill-pending'; }
+  function pillLabel(s) { return s === 'published' ? 'Published' : s === 'rejected' ? 'Rejected' : 'Pending Review'; }
+  function esc(v) { if (!v) return ''; const d = document.createElement('div'); d.textContent = v; return d.innerHTML; }
+
+  function renderReviewCard(rec) {
+    currentRecord = rec;
+    const data = rec.data || {};
+    const persona = data.persona || {};
+    const details = data.details || {};
+    const policies = data.policies || {};
+    const menu = data.menu || [];
+
+    document.getElementById('review-detail').style.display = '';
+    document.getElementById('review-source-label').textContent = rec.source_file || '';
+    const pill = document.getElementById('review-status-pill');
+    pill.className = 'status-pill ' + pillClass(rec.status);
+    pill.textContent = pillLabel(rec.status);
+
+    const warn = document.getElementById('review-warning');
+    if (rec.warning) {
+      warn.style.display = '';
+      warn.innerHTML = `<div style="background:var(--warning-light,#fffbea);border:1px solid var(--warning,#f59e0b);border-radius:6px;padding:10px 14px;font-size:13px;color:#92400e;"><i class="fa-solid fa-triangle-exclamation mr-2"></i>${esc(rec.warning)}</div>`;
+    } else { warn.style.display = 'none'; }
+
+    // Populate preview
+    document.getElementById('prev-business-name').textContent = data.business_name || '—';
+
+    function fieldHtml(label, val) {
+      return `<div class="field-item"><div class="field-label">${label}</div>${val ? `<div class="field-value">${esc(val)}</div>` : '<div class="field-empty">Not found in source</div>'}</div>`;
+    }
+    document.getElementById('prev-persona').innerHTML =
+      fieldHtml('Agent Name', persona.agent_name) + fieldHtml('Tone', persona.tone) +
+      fieldHtml('Language', persona.language) + fieldHtml('Greeting Style', persona.greeting_style) +
+      fieldHtml('Greeting Script', persona.greeting_script) + fieldHtml('Closing Script', persona.closing_script) +
+      fieldHtml('Notes', persona.notes);
+    document.getElementById('prev-details').innerHTML =
+      fieldHtml('Address', details.address) + fieldHtml('Phone', details.phone) +
+      fieldHtml('Hours', details.hours) + fieldHtml('Avg Prep Time', details.avg_preparation_time) +
+      fieldHtml('Delivery Info', details.delivery_info) + fieldHtml('Delivery Areas', (details.delivery_areas || []).join(', '));
+    document.getElementById('prev-policies').innerHTML =
+      fieldHtml('Upsell Strategy', policies.upsell_strategy) +
+      fieldHtml('Out-of-Stock Protocol', policies.out_of_stock_protocol) +
+      fieldHtml('Escalation Protocol', policies.escalation_protocol);
+
+    // Menu table
+    let menuHtml = '';
+    if (menu.length) {
+      menuHtml = `<div style="overflow-x:auto;"><table class="rag-menu-table"><thead><tr><th>Category</th><th>Item</th><th>Price</th><th>Description</th><th>Customizations</th></tr></thead><tbody>`;
+      menu.forEach(it => {
+        const price = (it.variants || []).length ? it.variants.map(v => `${esc(v.name)}: ${esc(v.price || '—')}`).join('<br>') : (esc(it.price) || '—');
+        menuHtml += `<tr><td>${esc(it.category) || '—'}</td><td style="font-weight:600;">${esc(it.item) || '—'}</td><td style="font-family:monospace;">${price}</td><td>${esc(it.description) || '—'}</td><td>${(it.customizations || []).map(c => esc(c)).join(', ') || '—'}</td></tr>`;
+      });
+      menuHtml += '</tbody></table></div>';
+    } else { menuHtml = '<div style="color:var(--text-secondary);font-size:13px;">No menu items found.</div>'; }
+    document.getElementById('prev-menu').innerHTML = menuHtml;
+
+    // Show/hide publish/reject based on status
+    const pab = document.getElementById('preview-action-bar');
+    if (rec.status === 'pending_review') { pab.style.display = ''; }
+    else { pab.style.display = rec.status === 'published' ? 'none' : ''; }
+
+    // Populate edit fields
+    document.getElementById('edit-business-name').value = data.business_name || '';
+    document.getElementById('edit-agent-name').value = persona.agent_name || '';
+    document.getElementById('edit-tone').value = persona.tone || '';
+    document.getElementById('edit-language').value = persona.language || '';
+    document.getElementById('edit-greeting-style').value = persona.greeting_style || '';
+    document.getElementById('edit-greeting-script').value = persona.greeting_script || '';
+    document.getElementById('edit-closing-script').value = persona.closing_script || '';
+    document.getElementById('edit-notes').value = persona.notes || '';
+    document.getElementById('edit-address').value = details.address || '';
+    document.getElementById('edit-phone').value = details.phone || '';
+    document.getElementById('edit-hours').value = details.hours || '';
+    document.getElementById('edit-avg-prep').value = details.avg_preparation_time || '';
+    document.getElementById('edit-delivery-info').value = details.delivery_info || '';
+    document.getElementById('edit-delivery-areas').value = (details.delivery_areas || []).join(', ');
+    document.getElementById('edit-upsell').value = policies.upsell_strategy || '';
+    document.getElementById('edit-oos').value = policies.out_of_stock_protocol || '';
+    document.getElementById('edit-escalation').value = policies.escalation_protocol || '';
+    renderEditMenuTable(menu);
+
+    switchReviewTab('preview');
+    document.getElementById('review-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function renderEditMenuTable(menu) {
+    const tbody = document.getElementById('edit-menu-tbody');
+    tbody.innerHTML = '';
+    (menu || []).forEach(it => addMenuRow(it));
+  }
+
+  function addMenuRow(it) {
+    it = it || {};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+    <td><input type="text" placeholder="Category" value="${esc(it.category || '')}"></td>
+    <td><input type="text" placeholder="Item name" value="${esc(it.item || '')}"></td>
+    <td><input type="text" placeholder="Price" value="${esc(it.price || '')}"></td>
+    <td><textarea placeholder="Description">${esc(it.description || '')}</textarea></td>
+    <td><input type="text" placeholder="opt1, opt2" value="${esc((it.customizations || []).join(', '))}"></td>
+    <td><input type="text" placeholder='[{"name":"Lg","price":"550"}]' value="${esc(JSON.stringify(it.variants || []))}"></td>
+    <td><button type="button" class="del-row-btn" title="Delete row"><i class="fa-solid fa-trash"></i></button></td>`;
+    tr.querySelector('.del-row-btn').addEventListener('click', () => tr.remove());
+    document.getElementById('edit-menu-tbody').appendChild(tr);
+  }
+
+  function buildCorrectedData() {
+    const rows = document.querySelectorAll('#edit-menu-tbody tr');
+    const menu = [];
+    rows.forEach(tr => {
+      const inputs = tr.querySelectorAll('input, textarea');
+      const category = inputs[0].value.trim();
+      const item = inputs[1].value.trim();
+      if (!category && !item) return;
+      let variants = [];
+      try { const v = JSON.parse(inputs[5].value || '[]'); if (Array.isArray(v)) variants = v; } catch (e) { }
+      menu.push({
+        category, item,
+        price: inputs[2].value.trim(),
+        description: inputs[3].value.trim(),
+        customizations: inputs[4].value.split(',').map(s => s.trim()).filter(Boolean),
+        variants
+      });
+    });
+    return {
+      business_name: document.getElementById('edit-business-name').value.trim(),
+      persona: {
+        agent_name: document.getElementById('edit-agent-name').value.trim(),
+        tone: document.getElementById('edit-tone').value.trim(),
+        language: document.getElementById('edit-language').value.trim(),
+        greeting_style: document.getElementById('edit-greeting-style').value.trim(),
+        greeting_script: document.getElementById('edit-greeting-script').value.trim(),
+        closing_script: document.getElementById('edit-closing-script').value.trim(),
+        notes: document.getElementById('edit-notes').value.trim()
+      },
+      details: {
+        address: document.getElementById('edit-address').value.trim(),
+        phone: document.getElementById('edit-phone').value.trim(),
+        hours: document.getElementById('edit-hours').value.trim(),
+        avg_preparation_time: document.getElementById('edit-avg-prep').value.trim(),
+        delivery_info: document.getElementById('edit-delivery-info').value.trim(),
+        delivery_areas: document.getElementById('edit-delivery-areas').value.split(',').map(s => s.trim()).filter(Boolean)
+      },
+      policies: {
+        upsell_strategy: document.getElementById('edit-upsell').value.trim(),
+        out_of_stock_protocol: document.getElementById('edit-oos').value.trim(),
+        escalation_protocol: document.getElementById('edit-escalation').value.trim()
+      },
+      menu
+    };
+  }
+
+  function switchReviewTab(tab) {
+    document.getElementById('review-preview-panel').style.display = tab === 'preview' ? '' : 'none';
+    document.getElementById('review-edit-panel').style.display = tab === 'edit' ? '' : 'none';
+    document.getElementById('rtab-preview').classList.toggle('active', tab === 'preview');
+    document.getElementById('rtab-edit').classList.toggle('active', tab === 'edit');
+  }
+
+  function closeReviewDetail() {
+    document.getElementById('review-detail').style.display = 'none';
+    document.querySelectorAll('.pending-review-item').forEach(d => d.classList.remove('selected'));
+    currentRecord = null;
+  }
+
+  function publishAsIs() {
+    if (!currentRecord) return;
+    const btn = document.getElementById('btn-publish-as-is');
+    btn.disabled = true; btn.innerHTML = '<span class="loading-spinner"></span>Publishing…';
+    fetch(`${RAG_BASE}/businesses/${BUSINESS_ID}/reviews/${currentRecord.ingestion_id}/publish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corrected_data: null })
+    }).then(r => r.json()).then(data => {
+      btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>Confirm & Publish As-Is';
+      if (data.detail) { showToast(data.detail, true); return; }
+      showToast('Published successfully!');
+      currentRecord = data; renderReviewCard(data); loadReviews();
+      setTimeout(() => window.location.reload(), 1000);
+    }).catch(err => { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>Confirm & Publish As-Is'; showToast('Error: ' + err.message, true); });
+  }
+
+  function publishEdited() {
+    if (!currentRecord) return;
+    const btn = document.getElementById('btn-publish-edited');
+    btn.disabled = true; btn.innerHTML = '<span class="loading-spinner"></span>Publishing…';
+    const corrected_data = buildCorrectedData();
+    fetch(`${RAG_BASE}/businesses/${BUSINESS_ID}/reviews/${currentRecord.ingestion_id}/publish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corrected_data })
+    }).then(r => r.json()).then(data => {
+      btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>Confirm & Publish';
+      if (data.detail) { showToast(data.detail, true); return; }
+      showToast('Published with edits!');
+      currentRecord = data; renderReviewCard(data); loadReviews();
+      setTimeout(() => window.location.reload(), 1000);
+    }).catch(err => { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>Confirm & Publish'; showToast('Error: ' + err.message, true); });
+  }
+
+  function rejectReview() {
+    if (!currentRecord) return;
+    if (!confirm('Reject this ingestion? It will not be part of the live knowledge base.')) return;
+    fetch(`${RAG_BASE}/businesses/${BUSINESS_ID}/reviews/${currentRecord.ingestion_id}/reject`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Rejected from admin dashboard' })
+    }).then(r => r.json()).then(data => {
+      if (data.detail) { showToast(data.detail, true); return; }
+      showToast('Review rejected.');
+      currentRecord = data; renderReviewCard(data); loadReviews();
+    }).catch(err => showToast('Error: ' + err.message, true));
+  }
+
+  // ─── Q&A ──────────────────────────────────────────────────────────────────────
+  function askQuestion() {
+    const q = document.getElementById('qa-input').value.trim();
+    if (!q) return;
+    const btn = document.getElementById('qa-ask-btn');
+    const spinner = document.getElementById('qa-spinner');
+    btn.disabled = true; spinner.style.display = '';
+    fetch(`${RAG_BASE}/query`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: BUSINESS_ID, question: q })
+    }).then(r => r.json()).then(data => {
+      btn.disabled = false; spinner.style.display = 'none';
+      if (data.detail) { showToast(data.detail, true); return; }
+      qaHistory.unshift({ question: q, answer: data.answer || '', sources: data.sources || [] });
+      document.getElementById('qa-input').value = '';
+      renderQAHistory();
+    }).catch(err => { btn.disabled = false; spinner.style.display = 'none'; showToast('Error: ' + err.message, true); });
+  }
+
+  function renderQAHistory() {
+    const el = document.getElementById('qa-history');
+    el.innerHTML = qaHistory.map(turn => `
+    <div class="qa-history-item">
+      <div class="qa-question"><i class="fa-solid fa-circle-question mr-2" style="color:var(--primary);"></i>${esc(turn.question)}</div>
+      <div class="qa-answer">${esc(turn.answer)}</div>
+      ${turn.sources.length ? `<div class="qa-sources"><i class="fa-solid fa-book mr-1"></i>Sources: ${turn.sources.map(s => esc(s)).join(', ')}</div>` : ''}
+    </div>`).join('');
+  }
+
+  function clearQAHistory() { qaHistory = []; document.getElementById('qa-history').innerHTML = ''; }
+
+  function syncMenuToRAG() {
+    const btn = document.getElementById('sync-menu-btn');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading-spinner" style="margin-right:4px;width:12px;height:12px;"></span>Syncing…';
+
+    fetch('/admin/menu/sync', {
+      method: 'POST'
+    })
+      .then(res => res.json())
+      .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+        if (data.success) {
+          showToast(data.message || 'Menu synced successfully!');
+        } else {
+          showToast(data.error || 'Failed to sync menu.', true);
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+        showToast('Error: ' + err.message, true);
+      });
+  }
+
+  function toggleSelectAll(masterCheckbox) {
+    const checkboxes = document.querySelectorAll('.menu-item-checkbox');
+    checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+    updateBulkDeleteButton();
+  }
+
+  function updateBulkDeleteButton() {
+    const checkboxes = document.querySelectorAll('.menu-item-checkbox');
+    const checked = Array.from(checkboxes).filter(cb => cb.checked);
+    const btn = document.getElementById('bulk-delete-btn');
+    const countSpan = document.getElementById('selected-count');
+
+    if (checked.length > 0) {
+      btn.style.display = 'inline-flex';
+      btn.style.alignItems = 'center';
+      countSpan.textContent = checked.length;
+    } else {
+      btn.style.display = 'none';
+    }
+  }
+
+  function bulkDeleteSelected() {
+    const checkboxes = document.querySelectorAll('.menu-item-checkbox:checked');
+    const ids = Array.from(checkboxes).map(cb => parseInt(cb.dataset.id));
+    if (!ids.length) return;
+    if (!confirm(`Are you sure you want to delete the ${ids.length} selected item(s)?`)) return;
+
+    const btn = document.getElementById('bulk-delete-btn');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading-spinner" style="margin-right:4px;width:12px;height:12px;"></span>Deleting…';
+
+    fetch('/admin/menu/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    })
+      .then(res => res.json())
+      .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+        if (data.success) {
+          showToast(data.message || 'Items deleted successfully!');
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          showToast(data.error || 'Failed to delete items.', true);
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+        showToast('Error: ' + err.message, true);
+      });
+  }
+
+  // ─── Manual CRUD ──────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+
+
+    // Open add modal
+    document.getElementById('open-add-modal').addEventListener('click', () => document.getElementById('add-item-modal').style.display = 'flex');
+
+    // Add item form
+    document.getElementById('add-item-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = e.submitter; btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const res = await fetch('/admin/menu/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('item-name').value, price: parseFloat(document.getElementById('item-price').value), description: document.getElementById('item-description').value, category: document.getElementById('item-category').value }) });
+        if (res.ok) { showToast('Item added!'); setTimeout(() => window.location.reload(), 800); }
+        else { const d = await res.json(); showToast(d.error || 'Failed.', true); }
+      } catch (err) { showToast('Error: ' + err.message, true); }
+      finally { btn.disabled = false; btn.textContent = 'Save Item'; }
+    });
+
+    // Edit item buttons
+    let origEdit = {};
+    document.querySelectorAll('.edit-item-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        origEdit = { name: btn.dataset.name, price: btn.dataset.price, description: btn.dataset.description, category: btn.dataset.category };
+        document.getElementById('edit-item-id').value = btn.dataset.id;
+        document.getElementById('edit-item-name').value = btn.dataset.name;
+        document.getElementById('edit-item-price').value = btn.dataset.price;
+        document.getElementById('edit-item-description').value = btn.dataset.description;
+        document.getElementById('edit-item-category').value = btn.dataset.category;
+        document.getElementById('update-item-btn').disabled = true;
+        document.getElementById('edit-item-modal').style.display = 'flex';
+      });
+    });
+
+    function checkChanged() {
+      const changed = document.getElementById('edit-item-name').value !== origEdit.name || document.getElementById('edit-item-price').value != origEdit.price || document.getElementById('edit-item-description').value !== origEdit.description || document.getElementById('edit-item-category').value !== origEdit.category;
+      document.getElementById('update-item-btn').disabled = !changed;
+    }
+    ['edit-item-name', 'edit-item-price', 'edit-item-description', 'edit-item-category'].forEach(id => { const el = document.getElementById(id); if (el) { el.addEventListener('input', checkChanged); el.addEventListener('change', checkChanged); } });
+
+    document.getElementById('edit-item-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const id = document.getElementById('edit-item-id').value;
+      const btn = document.getElementById('update-item-btn'); btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const res = await fetch(`/admin/menu/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('edit-item-name').value, price: parseFloat(document.getElementById('edit-item-price').value), description: document.getElementById('edit-item-description').value, category: document.getElementById('edit-item-category').value }) });
+        if (res.ok) { showToast('Item updated!'); setTimeout(() => window.location.reload(), 800); }
+        else { const d = await res.json(); showToast(d.error || 'Failed.', true); }
+      } catch (err) { showToast('Error: ' + err.message, true); }
+      finally { btn.disabled = false; btn.textContent = 'Update Item'; }
+    });
+
+    document.getElementById('delete-item-btn').addEventListener('click', async () => {
+      if (!confirm('Delete this item?')) return;
+      const id = document.getElementById('edit-item-id').value;
+      try {
+        const res = await fetch(`/admin/menu/${id}`, { method: 'DELETE' });
+        if (res.ok) { showToast('Item deleted!'); setTimeout(() => window.location.reload(), 800); }
+        else { const d = await res.json(); showToast(d.error || 'Failed.', true); }
+      } catch (err) { showToast('Error: ' + err.message, true); }
+    });
+
+    // Close modals on backdrop click
+    ['add-item-modal', 'edit-item-modal'].forEach(id => {
+      document.getElementById(id).addEventListener('click', e => { if (e.target === document.getElementById(id)) document.getElementById(id).style.display = 'none'; });
+    });
+
+    // Load reviews on page load
+    loadReviews();
+  });
+</script>
+{% endblock %}
+
+
+{% block extra_css %}
+<style>
+  .rag-section {
+    margin-bottom: 24px;
+  }
+
+  .intake-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    width: fit-content;
+    margin-bottom: 20px;
+  }
+
+  .intake-toggle-btn {
+    padding: 8px 20px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+  }
+
+  .intake-toggle-btn.active {
+    background: var(--primary);
+    color: #fff;
+  }
+
+  .intake-toggle-btn:hover:not(.active) {
+    background: var(--background);
+  }
+
+  .drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-md);
+    padding: 48px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--background);
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .drop-zone:hover,
+  .drop-zone.drag-over {
+    border-color: var(--primary);
+    background: var(--primary-light);
+  }
+
+  .drop-zone-icon {
+    font-size: 36px;
+    color: var(--primary);
+    margin-bottom: 12px;
+  }
+
+  .drop-zone-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+  }
+
+  .progress-bar-wrap {
+    background: var(--border);
+    border-radius: 999px;
+    height: 6px;
+    margin-top: 12px;
+  }
+
+  .progress-bar-fill {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--primary);
+    transition: width 0.4s;
+  }
+
+  .status-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+
+  .pill-pending {
+    background: #FDF0DA;
+    color: #96600D;
+  }
+
+  .pill-published {
+    background: #E1F3E8;
+    color: #1B7A44;
+  }
+
+  .pill-rejected {
+    background: #FBE4E4;
+    color: #A5312F;
+  }
+
+  .review-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-secondary);
+    margin: 18px 0 10px;
+  }
+
+  .field-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 24px;
+  }
+
+  .field-item .field-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 3px;
+  }
+
+  .field-item .field-value {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.5;
+  }
+
+  .field-item .field-empty {
+    font-size: 13px;
+    color: var(--border);
+    font-style: italic;
+  }
+
+  .rag-menu-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .rag-menu-table thead th {
+    background: var(--background);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .rag-menu-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .rag-menu-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .rag-menu-table tr:hover td {
+    background: var(--background);
+  }
+
+  .editable-menu-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .editable-menu-table thead th {
+    background: var(--background);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .editable-menu-table td {
+    padding: 4px 4px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  .editable-menu-table td input,
+  .editable-menu-table td textarea {
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text-primary);
+    font-family: inherit;
+  }
+
+  .editable-menu-table td input:focus,
+  .editable-menu-table td textarea:focus {
+    border-color: var(--primary);
+    outline: none;
+    background: var(--surface);
+  }
+
+  .editable-menu-table td textarea {
+    resize: none;
+    height: 40px;
+  }
+
+  .editable-menu-table .del-row-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+  }
+
+  .editable-menu-table .del-row-btn:hover {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .add-row-btn {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+
+  .qa-history-item {
+    border-left: 3px solid var(--primary);
+    padding: 8px 0 8px 14px;
+    margin-bottom: 18px;
+  }
+
+  .qa-question {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+
+  .qa-answer {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.6;
+  }
+
+  .qa-sources {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+  }
+
+  .review-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .loading-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .action-bar {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .review-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 18px;
+  }
+
+  .review-tab {
+    padding: 8px 18px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.15s;
+  }
+
+  .review-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+  }
+
+  .pending-reviews-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+
+  .pending-review-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .pending-review-item:hover {
+    border-color: var(--primary);
+  }
+
+  .pending-review-item.selected {
+    border-color: var(--primary);
+    background: var(--primary-light);
+  }
+
+  .section-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 20px 0;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Menu & Knowledge Base</h1>
+    <div style="font-size:14px;color:var(--text-secondary);">Ingest documents, review extracted data, and test the AI
+      knowledge base</div>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-secondary" id="sync-menu-btn" onclick="syncMenuToRAG()"><i
+        class="fa-solid fa-rotate mr-2"></i>Sync Menu to RAG</button>
+    <button class="btn btn-secondary" id="open-add-modal"><i class="fa-solid fa-plus mr-2"></i>Add Menu Item</button>
+  </div>
+</div>
+
+<div id="toast"
+  style="visibility:hidden;min-width:260px;background-color:var(--success);color:#fff;text-align:center;border-radius:6px;padding:14px 18px;position:fixed;z-index:9999;right:30px;bottom:30px;font-size:13px;font-weight:500;box-shadow:0 4px 14px rgba(0,0,0,0.15);opacity:0;transition:opacity 0.3s,visibility 0.3s;">
+</div>
+
+<!-- ===== SECTION 1: DOCUMENT INTAKE ===== -->
+<div class="card rag-section">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-file-import mr-2" style="color:var(--primary);"></i>Document Intake
+    </div>
+  </div>
+
+  <div class="intake-toggle">
+    <button class="intake-toggle-btn active" id="tab-upload" onclick="switchIntakeMode('upload')"><i
+        class="fa-solid fa-upload mr-1"></i>Upload File</button>
+    <button class="intake-toggle-btn" id="tab-text" onclick="switchIntakeMode('text')"><i
+        class="fa-solid fa-paste mr-1"></i>Paste Text</button>
+  </div>
+
+  <!-- Upload Mode -->
+  <div id="intake-upload-panel">
+    <label id="drop-zone" class="drop-zone" for="file-input-rag">
+      <div class="drop-zone-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+      <div style="font-weight:500;font-size:15px;">Drop file here or click to browse</div>
+      <div class="drop-zone-sub">Accepts .txt, .pdf, .png, .jpg, .jpeg, .webp — scanned pages and photos are read
+        automatically.</div>
+      <input type="file" id="file-input-rag" accept=".txt,.pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
+    </label>
+    <div id="selected-file-info" style="display:none;margin-top:12px;font-size:13px;color:var(--text-secondary);"></div>
+  </div>
+
+  <!-- Paste Text Mode -->
+  <div id="intake-text-panel" style="display:none;">
+    <div class="form-group">
+      <label class="form-label" for="paste-label">Label (optional)</label>
+      <input class="form-control" type="text" id="paste-label" placeholder="e.g. menu_v2, policy_doc"
+        style="max-width:340px;">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Content</label>
+      <textarea class="form-control" id="paste-text" rows="8"
+        placeholder="Paste your menu, persona script, hours, or policies here..."></textarea>
+    </div>
+    <button class="btn btn-primary" id="ingest-text-btn" onclick="ingestText()"><i
+        class="fa-solid fa-bolt mr-2"></i>Ingest This Text</button>
+  </div>
+
+  <!-- Progress Indicator -->
+  <div id="ingestion-progress" style="display:none;margin-top:16px;">
+    <div style="display:flex;align-items:center;font-size:13px;color:var(--text-secondary);">
+      <span class="loading-spinner"></span>
+      <span id="ingestion-status-text">Extracting and structuring</span>
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="ingestion-progress-bar" style="width:30%;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SECTION 2: PENDING REVIEWS ===== -->
+<div class="card rag-section" id="reviews-card">
+  <div class="card-header" style="flex-wrap:wrap;gap:10px;">
+    <div class="card-title"><i class="fa-solid fa-clipboard-check mr-2" style="color:var(--primary);"></i>Pending
+      Reviews</div>
+    <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px;" onclick="loadReviews()"><i
+        class="fa-solid fa-rotate-right mr-1"></i>Refresh</button>
+  </div>
+
+  <div id="reviews-loading"
+    style="text-align:center;padding:24px;color:var(--text-secondary);font-size:13px;display:none;"><span
+      class="loading-spinner"></span>Loading…</div>
+  <div id="reviews-empty"
+    style="text-align:center;padding:24px;color:var(--text-secondary);font-size:13px;display:none;"><i
+      class="fa-solid fa-inbox" style="font-size:28px;display:block;margin-bottom:8px;color:var(--border);"></i>No
+    pending reviews for this business.</div>
+
+  <div id="reviews-list" class="pending-reviews-list"></div>
+
+  <!-- Review Detail Panel -->
+  <div id="review-detail" style="display:none;">
+    <hr class="section-divider">
+    <div class="review-card-header">
+      <div>
+        <span id="review-source-label" style="font-weight:600;font-size:14px;"></span>
+        <span id="review-status-pill" class="status-pill pill-pending" style="margin-left:10px;"></span>
+      </div>
+      <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px;" onclick="closeReviewDetail()"><i
+          class="fa-solid fa-xmark mr-1"></i>Close</button>
+    </div>
+    <div id="review-warning" style="display:none;" class="form-group"></div>
+
+    <div class="review-tabs">
+      <button class="review-tab active" id="rtab-preview" onclick="switchReviewTab('preview')">Preview</button>
+      <button class="review-tab" id="rtab-edit" onclick="switchReviewTab('edit')">Edit</button>
+    </div>
+
+    <!-- PREVIEW MODE -->
+    <div id="review-preview-panel">
+      <div class="review-section-label">Business Name</div>
+      <div id="prev-business-name" class="field-value" style="font-size:15px;font-weight:600;"></div>
+
+      <div class="review-section-label">Persona</div>
+      <div class="field-grid-2" id="prev-persona"></div>
+
+      <div class="review-section-label">Details</div>
+      <div class="field-grid-2" id="prev-details"></div>
+
+      <div class="review-section-label">Policies</div>
+      <div class="field-grid-2" id="prev-policies"></div>
+
+      <div class="review-section-label">Menu</div>
+      <div id="prev-menu"></div>
+
+      <div class="action-bar" id="preview-action-bar">
+        <button class="btn btn-secondary" onclick="switchReviewTab('edit')"><i
+            class="fa-solid fa-pen mr-2"></i>Edit</button>
+        <button class="btn btn-primary" id="btn-publish-as-is" onclick="publishAsIs()"><i
+            class="fa-solid fa-check mr-2"></i>Confirm &amp; Publish As-Is</button>
+        <button class="btn btn-secondary text-danger" id="btn-reject-preview" onclick="rejectReview()"><i
+            class="fa-solid fa-xmark mr-2"></i>Reject</button>
+      </div>
+    </div>
+
+    <!-- EDIT MODE -->
+    <div id="review-edit-panel" style="display:none;">
+      <div class="form-row" style="margin-bottom:12px;">
+        <div class="form-group">
+          <label class="form-label">Business Name</label>
+          <input class="form-control" type="text" id="edit-business-name">
+        </div>
+      </div>
+
+      <div class="review-section-label">Persona</div>
+      <div class="field-grid-2">
+        <div class="form-group"><label class="form-label">Agent Name</label><input class="form-control" type="text"
+            id="edit-agent-name"></div>
+        <div class="form-group"><label class="form-label">Tone</label><input class="form-control" type="text"
+            id="edit-tone"></div>
+        <div class="form-group"><label class="form-label">Language</label><input class="form-control" type="text"
+            id="edit-language"></div>
+        <div class="form-group"><label class="form-label">Greeting Style</label><input class="form-control" type="text"
+            id="edit-greeting-style"></div>
+      </div>
+      <div class="field-grid-2">
+        <div class="form-group"><label class="form-label">Greeting Script</label><textarea class="form-control"
+            id="edit-greeting-script" rows="3"></textarea></div>
+        <div class="form-group"><label class="form-label">Closing Script</label><textarea class="form-control"
+            id="edit-closing-script" rows="3"></textarea></div>
+      </div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-control" id="edit-notes"
+          rows="2"></textarea></div>
+
+      <div class="review-section-label">Details</div>
+      <div class="field-grid-2">
+        <div class="form-group"><label class="form-label">Address</label><input class="form-control" type="text"
+            id="edit-address"></div>
+        <div class="form-group"><label class="form-label">Phone</label><input class="form-control" type="text"
+            id="edit-phone"></div>
+        <div class="form-group"><label class="form-label">Hours</label><input class="form-control" type="text"
+            id="edit-hours"></div>
+        <div class="form-group"><label class="form-label">Avg Prep Time</label><input class="form-control" type="text"
+            id="edit-avg-prep"></div>
+        <div class="form-group"><label class="form-label">Delivery Info</label><input class="form-control" type="text"
+            id="edit-delivery-info"></div>
+        <div class="form-group"><label class="form-label">Delivery Areas (comma-separated)</label><input
+            class="form-control" type="text" id="edit-delivery-areas"></div>
+      </div>
+
+      <div class="review-section-label">Policies</div>
+      <div class="field-grid-2">
+        <div class="form-group"><label class="form-label">Upsell Strategy</label><textarea class="form-control"
+            id="edit-upsell" rows="3"></textarea></div>
+        <div class="form-group"><label class="form-label">Out-of-Stock Protocol</label><textarea class="form-control"
+            id="edit-oos" rows="3"></textarea></div>
+        <div class="form-group"><label class="form-label">Escalation Protocol</label><textarea class="form-control"
+            id="edit-escalation" rows="3"></textarea></div>
+      </div>
+
+      <div class="review-section-label">Menu <small
+          style="font-weight:400;text-transform:none;color:var(--text-secondary);">(edit cells, add or delete
+          rows)</small></div>
+      <div style="overflow-x:auto;">
+        <table class="editable-menu-table" id="edit-menu-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Item</th>
+              <th>Price</th>
+              <th>Description</th>
+              <th>Customizations</th>
+              <th>Variants (JSON)</th>
+              <th style="width:36px;"></th>
+            </tr>
+          </thead>
+          <tbody id="edit-menu-tbody"></tbody>
+        </table>
+      </div>
+      <button class="btn btn-secondary add-row-btn" onclick="addMenuRow()"><i class="fa-solid fa-plus mr-1"></i>Add
+        Row</button>
+
+      <div class="action-bar">
+        <button class="btn btn-primary" id="btn-publish-edited" onclick="publishEdited()"><i
+            class="fa-solid fa-check mr-2"></i>Confirm &amp; Publish</button>
+        <button class="btn btn-secondary text-danger" onclick="rejectReview()"><i
+            class="fa-solid fa-xmark mr-2"></i>Reject</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SECTION 3: ASK A QUESTION ===== -->
+<div class="card rag-section">
+  <div class="card-header">
+    <div class="card-title"><i class="fa-solid fa-magnifying-glass mr-2" style="color:var(--primary);"></i>Test
+      Knowledge Base</div>
+    <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px;" onclick="clearQAHistory()"><i
+        class="fa-solid fa-trash mr-1"></i>Clear History</button>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <input class="form-control" type="text" id="qa-input" placeholder="e.g. What are your delivery timings?"
+      style="flex:1;" onkeydown="if(event.key==='Enter')askQuestion()">
+    <button class="btn btn-primary" id="qa-ask-btn" onclick="askQuestion()"><i
+        class="fa-solid fa-paper-plane mr-2"></i>Ask</button>
+  </div>
+  <div id="qa-spinner" style="display:none;margin-top:12px;font-size:13px;color:var(--text-secondary);"><span
+      class="loading-spinner"></span>Retrieving and generating answer…</div>
+  <div id="qa-history" style="margin-top:20px;"></div>
+</div>
+
+<!-- ===== SECTION 4: MANUAL MENU (legacy) ===== -->
+<div class="card rag-section">
+  <div class="card-header"
+    style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <div class="card-title"><i class="fa-solid fa-utensils mr-2" style="color:var(--primary);"></i>Manual Menu Items
+    </div>
+    <button class="btn btn-secondary text-danger" id="bulk-delete-btn"
+      style="display:none; padding:6px 12px; font-size:13px;" onclick="bulkDeleteSelected()"><i
+        class="fa-solid fa-trash mr-2"></i>Delete Selected (<span id="selected-count">0</span>)</button>
+  </div>
+  <div class="table-responsive">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:40px; padding-left:16px; text-align:left; vertical-align:middle;">
+            <input type="checkbox" id="select-all-items" onclick="toggleSelectAll(this)"
+              style="cursor:pointer; transform:scale(1.1);">
+          </th>
+          <th>Item Name & Description</th>
+          <th>Category</th>
+          <th>Price (PKR)</th>
+          <th class="text-right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if menu_items %}
+        {% for item in menu_items %}
+        <tr>
+          <td style="width:40px; padding-left:16px; vertical-align:middle;">
+            <input type="checkbox" class="menu-item-checkbox" data-id="{{ item.id }}"
+              onchange="updateBulkDeleteButton()" style="cursor:pointer; transform:scale(1.1);">
+          </td>
+          <td>
+            <div class="font-semibold">{{ item.name }}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">{{ item.description or '' }}</div>
+          </td>
+          <td>
+            <span class="badge badge-info" style="text-transform: capitalize;">{{ item.category.replace('-', ' ')
+              }}</span>
+          </td>
+          <td class="font-semibold">{{ '{:,.0f}'.format(item.price) }}</td>
+          <td class="text-right">
+            <button class="btn btn-secondary edit-item-btn" style="padding:4px 8px;" data-id="{{ item.id }}"
+              data-name="{{ item.name }}" data-category="{{ item.category }}"
+              data-description="{{ item.description or '' }}" data-price="{{ item.price }}">
+              <i class="fa-solid fa-edit"></i>
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+          <td colspan="5" class="text-center" style="padding:32px 16px;color:var(--text-secondary);">
+            <i class="fa-solid fa-utensils mb-2" style="font-size:22px;display:block;color:var(--border);"></i>
+            No items in the menu.
+          </td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Add Item Modal -->
+<div id="add-item-modal"
+  style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+  <div class="auth-card" style="position:relative;max-width:500px;padding:32px;width:100%;">
+    <button onclick="document.getElementById('add-item-modal').style.display='none'"
+      style="position:absolute;right:20px;top:20px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary);"><i
+        class="fa-solid fa-times"></i></button>
+    <h3 class="auth-title" style="margin-bottom:20px;">Add New Menu Item</h3>
+    <form id="add-item-form">
+      <div class="form-group"><label class="form-label">Item Name</label><input class="form-control" type="text"
+          id="item-name" required></div>
+      <div class="form-group"><label class="form-label">Description</label><textarea class="form-control"
+          id="item-description" rows="3" style="resize:none;"></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Price (PKR)</label><input class="form-control" type="number"
+            step="0.01" id="item-price" required></div>
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <input class="form-control" type="text" id="item-category" list="category-options" required
+            placeholder="Type or select category">
+          <datalist id="category-options">
+            <option value="main-course">Main Course</option>
+            <option value="appetizers">Appetizers</option>
+            <option value="beverages">Beverages</option>
+            <option value="desserts">Desserts</option>
+          </datalist>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px;">
+        <button type="button" class="btn btn-secondary"
+          onclick="document.getElementById('add-item-modal').style.display='none'" style="flex:1;">Cancel</button>
+        <button type="submit" class="btn btn-primary" style="flex:1;">Save Item</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Item Modal -->
+<div id="edit-item-modal"
+  style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+  <div class="auth-card" style="position:relative;max-width:500px;padding:32px;width:100%;">
+    <button onclick="document.getElementById('edit-item-modal').style.display='none'"
+      style="position:absolute;right:20px;top:20px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary);"><i
+        class="fa-solid fa-times"></i></button>
+    <h3 class="auth-title" style="margin-bottom:20px;">Edit Menu Item</h3>
+    <form id="edit-item-form">
+      <input type="hidden" id="edit-item-id">
+      <div class="form-group"><label class="form-label">Item Name</label><input class="form-control" type="text"
+          id="edit-item-name" required></div>
+      <div class="form-group"><label class="form-label">Price (PKR)</label><input class="form-control" type="number"
+          step="0.01" id="edit-item-price" required></div>
+      <div class="form-group"><label class="form-label">Description</label><textarea class="form-control"
+          id="edit-item-description" rows="3"></textarea></div>
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <input class="form-control" type="text" id="edit-item-category" list="category-options" required
+          placeholder="Type or select category">
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px;">
+        <button type="button" class="btn btn-secondary text-danger" id="delete-item-btn" style="flex:1;"><i
+            class="fa-solid fa-trash mr-2"></i>Delete</button>
+        <button type="submit" class="btn btn-primary" id="update-item-btn" style="flex:2;" disabled>Update Item</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

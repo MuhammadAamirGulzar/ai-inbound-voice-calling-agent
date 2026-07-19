@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Instruct the app to connect to the separate ollama and postgres containers
+      - OLLAMA_HOST=http://ollama:11434
+      - MODEL_ENDPOINT_URL=http://ollama:11434/v1
+      - DATABASE_URL=postgresql://ai_caller_user:11121@postgres:5432/ai_caller
+      # Force cache directories to resolve within the mount inside the container
+      - HF_HOME=/app/.cache/huggingface
+      - HF_HUB_CACHE=/app/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+      - TORCH_HOME=/app/.cache/torch
+    volumes:
+      # Bind mounts to keep all caches, weights, and files strictly in the local project directory
+      - ./.cache/huggingface:/app/.cache/huggingface
+      - ./.cache/torch:/app/.cache/torch
+    depends_on:
+      - ollama
+      - postgres
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      # Bind mount to persist Ollama models locally in the project directory
+      - ./.cache/ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=ai_caller_user
+      - POSTGRES_PASSWORD=11121
+      - POSTGRES_DB=ai_caller
+    volumes:
+      # Bind mount to persist database storage locally in the project directory
+      - ./.cache/postgres_data:/var/lib/postgresql/data
+

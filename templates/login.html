@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - OrderSaathi</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/admin/style.css">
+</head>
+
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="auth-brand">
+                    <i class="fa-solid fa-microphone-lines mr-2"></i>OrderSaathi
+                </div>
+                <h2 class="auth-title">Welcome back</h2>
+                <p class="auth-subtitle">Login to your OrderSaathi account</p>
+            </div>
+
+            <form action="/login" method="POST" id="login-form">
+                <div id="error-message" style="color: var(--danger); background-color: rgba(244, 63, 94, 0.1); border: 1px solid var(--danger); padding: 10px; border-radius: 8px; margin-bottom: 15px; display: none; font-size: 14px;"></div>
+                <div class="form-group">
+                    <label class="form-label" for="username">Username</label>
+                    <input class="form-control" type="text" id="username" name="username" placeholder="Username"
+                        required>
+                </div>
+
+                <div class="form-group">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label class="form-label" for="password" style="margin: 0;">Password</label>
+                        <a href="#" class="link" style="font-size: 13px;">Forgot password?</a>
+                    </div>
+                    <input class="form-control" type="password" id="password" name="password" placeholder="••••••••"
+                        required>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 10px; height: 44px;">
+                    Log In
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('login-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.style.display = 'none';
+            errorDiv.textContent = '';
+            
+            const submitBtn = this.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = 'Logging in...';
+            submitBtn.disabled = true;
+
+            const formData = new FormData(this);
+            fetch("/login", {
+                method: "POST",
+                body: formData
+            })
+            .then(async response => {
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Login failed. Please check your credentials.');
+                }
+                return data;
+            })
+            .then(data => {
+                if (data.redirect_url) {
+                    window.location.href = data.redirect_url;
+                }
+            })
+            .catch(error => {
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+                errorDiv.textContent = error.message;
+                errorDiv.style.display = 'block';
+            });
+        });
+    </script>
+</body>
+
+</html>

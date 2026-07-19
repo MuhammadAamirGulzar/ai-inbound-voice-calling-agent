@@ -1,0 +1,121 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'orders' %}
+
+{% block title %}Orders - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Orders Management</h1>
+    <div style="font-size: 14px; color: var(--text-secondary);">
+        Monitor and update the fulfillment state of AI-booked orders
+    </div>
+</div>
+
+<!-- Filters Bar -->
+<div class="filter-bar">
+    <div class="filter-group" style="flex: 1; min-width: 240px;">
+        <i class="fa-solid fa-search" style="color: var(--text-secondary); margin-right: -28px; z-index: 5; position: relative;"></i>
+        <input class="form-control" type="text" id="order-search" placeholder="Search by Order ID or Phone..." style="padding-left: 36px;">
+    </div>
+    
+    <div class="filter-group">
+        <label for="status-filter" style="margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">Order Status:</label>
+        <select class="form-control" id="status-filter" style="width: auto; padding: 6px 12px;">
+            <option value="all">All Orders</option>
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="cancelled">Cancelled</option>
+        </select>
+    </div>
+</div>
+
+<!-- Orders Table -->
+<div class="card">
+    <div class="table-responsive">
+        <table class="table" id="orders-table">
+            <thead>
+                <tr>
+                    <th>Order ID</th>
+                    <th>Customer Phone</th>
+                    <th>Items Summary</th>
+                    <th>Total Price</th>
+                    <th>Time Booked</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in orders %}
+                <tr data-search="{{ order.id }} {{ order.customer_phone }}" data-status="{{ order.status_lower }}">
+                    <td class="font-bold">#{{ order.id }}</td>
+                    <td class="font-semibold">{{ order.customer_phone }}</td>
+                    <td>{{ order.items_str }}</td>
+                    <td class="font-bold">{{ order.total_price }}</td>
+                    <td>{{ order.time_str }}</td>
+                    <td>
+                        {% if order.status_lower == 'confirmed' %}
+                            {% if order.dispatched_to_external_system %}
+                                <span class="badge badge-success" title="Successfully sent to restaurant system">
+                                    <i class="fa-solid fa-paper-plane mr-1"></i> Sent
+                                </span>
+                            {% elif order.dispatch_attempts > 0 %}
+                                <span class="badge badge-danger" title="Failed to dispatch: {{ order.last_dispatch_error or 'Unknown error' }}">
+                                    <i class="fa-solid fa-circle-exclamation mr-1"></i> Failed Send
+                                </span>
+                            {% else %}
+                                <span class="badge badge-success" title="Confirmed, ready to send">
+                                    <i class="fa-solid fa-check mr-1"></i> Confirmed
+                                </span>
+                            {% endif %}
+                        {% elif order.status_lower == 'pending' %}
+                            <span class="badge badge-warning" title="Pending: AI booked order awaiting URL configuration or confirmation">
+                                <i class="fa-solid fa-hourglass-half mr-1"></i> Pending
+                            </span>
+                        {% else %}
+                            <span class="badge badge-danger">
+                                <i class="fa-solid fa-xmark mr-1"></i> Cancelled
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td><a href="/admin/order-detail?id={{ order.id }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;">Manage</a></td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 24px;">No orders booked yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    const searchInput = document.getElementById('order-search');
+    const statusFilter = document.getElementById('status-filter');
+    const rows = document.querySelectorAll('#orders-table tbody tr');
+
+    function filterOrders() {
+        const query = searchInput.value.toLowerCase();
+        const statusVal = statusFilter.value;
+
+        rows.forEach(row => {
+            const searchText = row.getAttribute('data-search').toLowerCase();
+            const status = row.getAttribute('data-status');
+
+            const matchesQuery = searchText.includes(query);
+            const matchesStatus = statusVal === 'all' || status === statusVal;
+
+            if (matchesQuery && matchesStatus) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    searchInput.addEventListener('input', filterOrders);
+    statusFilter.addEventListener('change', filterOrders);
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,226 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'analytics' %}
+
+{% block title %}Analytics - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Analytics & Insights</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Performance reports, conversion metrics, and peak hour trends
+        </div>
+    </div>
+    
+    <!-- Date selector -->
+    <div class="filter-group">
+        <label for="analytics-range" style="margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">Report Period:</label>
+        <select class="form-control" id="analytics-range" style="width: auto; padding: 8px 14px;">
+            <option value="7days" selected>Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="this-month">This Month</option>
+            <option value="last-month">Last Month</option>
+        </select>
+    </div>
+</div>
+
+<!-- Key Analytics metrics -->
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Call-to-Order Conversion</span>
+            <i class="fa-solid fa-cart-shopping" style="color: var(--success);"></i>
+        </div>
+        <div class="kpi-value" id="conversion-rate-val">{{ '%.1f' | format(conversion_rate) }}%</div>
+        <div class="kpi-trend {% if conversion_rate_diff >= 0 %}up{% else %}down{% endif %}">
+            <i class="fa-solid fa-arrow-trend-{% if conversion_rate_diff >= 0 %}up{% else %}down{% endif %}"></i> {% if conversion_rate_diff > 0 %}+{% endif %}{{ '%.1f' | format(conversion_rate_diff) }}% vs last week
+        </div>
+    </div>
+    
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Missed Call Rate</span>
+            <i class="fa-solid fa-phone-slash" style="color: var(--danger);"></i>
+        </div>
+        <div class="kpi-value" id="missed-rate-val">{{ '%.1f' | format(missed_rate) }}%</div>
+        <div class="kpi-trend {% if missed_rate_diff <= 0 %}down{% else %}up{% endif %}">
+            <i class="fa-solid fa-arrow-trend-{% if missed_rate_diff <= 0 %}down{% else %}up{% endif %}"></i> {% if missed_rate_diff > 0 %}+{% endif %}{{ '%.1f' | format(missed_rate_diff) }}% vs last week
+        </div>
+    </div>
+    
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Avg Order Value</span>
+            <i class="fa-solid fa-money-bill-wave" style="color: var(--primary);"></i>
+        </div>
+        <div class="kpi-value" id="aov-val">PKR {{ '{:,.0f}'.format(aov) }}</div>
+        <div class="kpi-trend {% if aov_diff >= 0 %}up{% else %}down{% endif %}">
+            <i class="fa-solid fa-arrow-trend-{% if aov_diff >= 0 %}up{% else %}down{% endif %}"></i> {% if aov_diff > 0 %}+{% endif %}PKR {{ '{:,.0f}'.format(aov_diff) }} vs last week
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Total Telephony Hours</span>
+            <i class="fa-solid fa-clock" style="color: var(--info);"></i>
+        </div>
+        <div class="kpi-value" id="hours-val">{{ '%.1f' | format(total_hours) }} hrs</div>
+        <div class="kpi-trend {% if hours_diff >= 0 %}up{% else %}down{% endif %}">
+            <i class="fa-solid fa-arrow-trend-{% if hours_diff >= 0 %}up{% else %}down{% endif %}"></i> {% if hours_diff > 0 %}+{% endif %}{{ '%.1f' | format(hours_diff) }} hrs vs last week
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    <!-- Call Volume Over Time -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Call Volume & Order Volume</div>
+        </div>
+        <div class="card-body">
+            <!-- Line Chart SVG simulation -->
+            <!-- Line Chart SVG container -->
+            <div style="position: relative; height: 220px; width: 100%; border-bottom: 2px solid var(--border); border-left: 2px solid var(--border); padding-left: 10px;">
+                <svg id="chart-svg" width="100%" height="100%" viewBox="0 0 600 200" preserveAspectRatio="none" style="overflow: visible;">
+                    <!-- Grid Lines -->
+                    <line x1="0" y1="50" x2="600" y2="50" stroke="#f3f4f6" stroke-width="1" stroke-dasharray="4"/>
+                    <line x1="0" y1="100" x2="600" y2="100" stroke="#f3f4f6" stroke-width="1" stroke-dasharray="4"/>
+                    <line x1="0" y1="150" x2="600" y2="150" stroke="#f3f4f6" stroke-width="1" stroke-dasharray="4"/>
+                    
+                    <!-- Y Axis Labels -->
+                    <text x="-5" y="10" font-size="10" fill="var(--text-secondary)" text-anchor="end" id="y-max">Max</text>
+                    <text x="-5" y="100" font-size="10" fill="var(--text-secondary)" text-anchor="end" id="y-mid">Mid</text>
+                    <text x="-5" y="190" font-size="10" fill="var(--text-secondary)" text-anchor="end">0</text>
+                    
+                    <!-- Call Volume Line (Blue) -->
+                    <path id="call-path" d="" fill="none" style="stroke: var(--primary);" stroke-width="3" />
+                    <!-- Order Volume Line (Green) -->
+                    <path id="order-path" d="" fill="none" style="stroke: var(--success);" stroke-width="3" />
+                </svg>
+                <div id="chart-points"></div>
+            </div>
+            <!-- X Axis Labels -->
+            <div id="x-axis-labels" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-top: 8px; padding-left: 10px;">
+            </div>
+            <!-- Legend -->
+            <div style="display: flex; gap: 20px; justify-content: center; margin-top: 16px; font-size: 13px;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="display: inline-block; width: 12px; height: 3px; background-color: var(--primary);"></span>
+                    <span class="color-secondary">Call Volume</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="display: inline-block; width: 12px; height: 3px; background-color: var(--success);"></span>
+                    <span class="color-secondary">Orders Booked</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Peak Hours Heatmap -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Peak Hours Call Density</div>
+        </div>
+        <div class="card-body">
+            <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">Visualizes call volume density throughout the 24-hour day. Darker colors represent peak order periods.</div>
+            
+            <div class="heatmap-grid">
+                <!-- 24 cells for 24 hours -->
+                {% for i in range(24) %}
+                    <div class="heatmap-cell heatmap-val-{{ densities[i] }}" data-label="{{ i }}:00 - Density: {{ densities[i] }}/4"></div>
+                {% endfor %}
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-secondary); margin-top: 8px;">
+                <span>12 AM</span>
+                <span>6 AM</span>
+                <span>12 PM</span>
+                <span>6 PM</span>
+                <span>11 PM</span>
+            </div>
+
+            <!-- Heatmap Legend -->
+            <div style="display: flex; gap: 4px; justify-content: flex-end; align-items: center; margin-top: 24px; font-size: 11px; color: var(--text-secondary);">
+                <span>Low volume</span>
+                <span style="width: 12px; height: 12px; background-color: #F3F4F6; border-radius: 2px;"></span>
+                <span style="width: 12px; height: 12px; background-color: #E0E7FF; border-radius: 2px;"></span>
+                <span style="width: 12px; height: 12px; background-color: #C7D2FE; border-radius: 2px;"></span>
+                <span style="width: 12px; height: 12px; background-color: #818CF8; border-radius: 2px;"></span>
+                <span style="width: 12px; height: 12px; background-color: #4F46E5; border-radius: 2px;"></span>
+                <span>High volume</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const rangeSelect = document.getElementById('analytics-range');
+    
+    function loadChartData() {
+        const range = rangeSelect ? rangeSelect.value : '7days';
+        fetch(`/admin/api/analytics/charts?range=${range}`)
+            .then(res => res.json())
+            .then(data => {
+                const callVol = data.call_volume;
+                const orderVol = data.order_volume;
+                const labels = data.labels;
+                
+                const maxVol = Math.max(...callVol, ...orderVol, 1);
+                
+                document.getElementById('y-max').textContent = Math.ceil(maxVol);
+                document.getElementById('y-mid').textContent = Math.ceil(maxVol / 2);
+                
+                const w = 600;
+                const h = 200;
+                const yPadding = 20;
+                const yRange = h - 2 * yPadding;
+                
+                const stepX = labels.length > 1 ? w / (labels.length - 1) : w;
+                
+                let callD = "";
+                let orderD = "";
+                let pointsHTML = "";
+                
+                labels.forEach((label, i) => {
+                    const cx = i * stepX;
+                    const cVol = callVol[i] || 0;
+                    const oVol = orderVol[i] || 0;
+                    let cy = h - yPadding - (cVol / maxVol) * yRange;
+                    let oy = h - yPadding - (oVol / maxVol) * yRange;
+                    
+                    // Apply a small offset if values are identical to ensure both lines are visible
+                    if (cVol === oVol) {
+                        cy -= 2.5;
+                        oy += 2.5;
+                    }
+                    
+                    if (i === 0) {
+                        callD += `M ${cx} ${cy} `;
+                        orderD += `M ${cx} ${oy} `;
+                    } else {
+                        callD += `L ${cx} ${cy} `;
+                        orderD += `L ${cx} ${oy} `;
+                    }
+                    
+                    pointsHTML += `<circle cx="${cx}" cy="${cy}" r="4" fill="var(--primary)"/>`;
+                    pointsHTML += `<circle cx="${cx}" cy="${oy}" r="4" fill="var(--success)"/>`;
+                });
+                
+                document.getElementById('call-path').setAttribute('d', callD);
+                document.getElementById('order-path').setAttribute('d', orderD);
+                document.getElementById('chart-points').innerHTML = `<svg width="100%" height="100%" viewBox="0 0 600 200" preserveAspectRatio="none" style="position: absolute; top:0; left:0; overflow: visible; pointer-events: none;">${pointsHTML}</svg>`;
+                
+                document.getElementById('x-axis-labels').innerHTML = labels.map(l => `<span>${l}</span>`).join('');
+            })
+            .catch(err => console.error("Error loading chart data", err));
+    }
+
+    if (rangeSelect) rangeSelect.addEventListener('change', loadChartData);
+    
+    loadChartData();
+});
+</script>
+{% endblock %}
+{% endblock %}

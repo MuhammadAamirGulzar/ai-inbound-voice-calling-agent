@@ -1,0 +1,200 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-settings' %}
+
+{% block title %}System Settings - Super Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">System Settings</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Configure global API keys, telephony trunks, LLM models, and platform defaults.
+        </div>
+    </div>
+</div>
+
+<div class="detail-layout">
+    <!-- Left Column: Global Core Settings -->
+    <div>
+        <!-- API Integrations Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">LLM & AI Providers</div>
+            </div>
+            <div class="card-body">
+                <form id="ai-form" onsubmit="saveSettings(event)">
+                    <div class="form-group">
+                        <label class="form-label" for="default-model">Default Chat Model</label>
+                        <select class="form-control" id="default-model">
+                            <option value="llama-3.1-8b-instant" {% if settings.groq_model == 'llama-3.1-8b-instant' %}selected{% endif %}>Llama 3.1 8B Instant (Groq)</option>
+                            <option value="llama-3.1-70b-versatile" {% if settings.groq_model == 'llama-3.1-70b-versatile' %}selected{% endif %}>Llama 3.1 70B Versatile (Groq)</option>
+                            <option value="llama3-70b-8192" {% if settings.groq_model == 'llama3-70b-8192' %}selected{% endif %}>Llama 3 70B (Groq)</option>
+                            <option value="llama3-8b-8192" {% if settings.groq_model == 'llama3-8b-8192' %}selected{% endif %}>Llama 3 8B (Groq)</option>
+                            <option value="mixtral-8x7b-32768" {% if settings.groq_model == 'mixtral-8x7b-32768' %}selected{% endif %}>Mixtral 8x7B (Groq)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="groq-api-key">Groq API Key</label>
+                        <input class="form-control" type="password" id="groq-api-key" value="{{ settings.groq_api_key }}" placeholder="gsk_...">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="elevenlabs-key">ElevenLabs Voice API Key</label>
+                        <input class="form-control" type="password" id="elevenlabs-key" value="{{ settings.elevenlabs_api_key }}" placeholder="API Key for TTS">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="deepgram-key">Deepgram STT API Key</label>
+                        <input class="form-control" type="password" id="deepgram-key" value="{{ settings.deepgram_api_key }}" placeholder="API Key for Whisper/STT">
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary">Save AI Providers</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Telephony / Twilio Settings -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Twilio Integration</div>
+            </div>
+            <div class="card-body">
+                <form id="twilio-form" onsubmit="saveSettings(event)">
+                    <div class="form-group">
+                        <label class="form-label" for="twilio-sid">Account SID</label>
+                        <input class="form-control" type="text" id="twilio-sid" value="{{ settings.twilio_account_sid }}">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="twilio-token">Auth Token</label>
+                        <input class="form-control" type="password" id="twilio-token" value="{{ settings.twilio_auth_token }}">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="twilio-phone">Default Caller Phone Number</label>
+                        <input class="form-control" type="text" id="twilio-phone" value="{{ settings.default_order_phone_number }}">
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary">Save Telephony</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Defaults & Subscriptions -->
+    <div>
+        <!-- Subscription Plan Configurations -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Platform Quotas & Defaults</div>
+            </div>
+            <div class="card-body">
+                <form id="quota-form" onsubmit="saveSettings(event)">
+                    <div class="form-group">
+                        <label class="form-label" for="trial-quota">Trial Quota (Minutes)</label>
+                        <input class="form-control" type="number" id="trial-quota" value="{{ settings.trial_quota }}">
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">Initial free call minutes assigned to new tenants.</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="pro-quota">Pro Plan Quota (Minutes)</label>
+                        <input class="form-control" type="number" id="pro-quota" value="{{ settings.pro_quota }}">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="payment-account-name">Payment Account Holder Name</label>
+                        <input class="form-control" type="text" id="payment-account-name" value="{{ settings.payment_account_name }}" placeholder="e.g. OrderSaathi Technologies">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="payment-account-number">Payment Account Number</label>
+                        <input class="form-control" type="text" id="payment-account-number" value="{{ settings.payment_account_number }}" placeholder="e.g. 0000-0000-0000-0000">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="monthly-price">Monthly Base Price (PKR)</label>
+                        <input class="form-control" type="number" id="monthly-price" value="{{ settings.monthly_price }}">
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary">Save Quotas</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Notification Element -->
+<div id="toast-notification" style="display: none; position: fixed; bottom: 20px; right: 20px; background-color: var(--success); color: white; padding: 12px 24px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 1000; transition: all 0.3s ease; opacity: 0;">
+    Settings saved successfully!
+</div>
+
+{% block extra_js %}
+<script>
+    function showToast(message, isError = false) {
+        const toast = document.getElementById("toast-notification");
+        toast.textContent = message;
+        toast.style.backgroundColor = isError ? "var(--danger)" : "var(--success)";
+        toast.style.display = "block";
+        
+        // Trigger reflow
+        toast.offsetHeight;
+        
+        toast.style.opacity = "1";
+        setTimeout(() => {
+            toast.style.opacity = "0";
+            setTimeout(() => {
+                toast.style.display = "none";
+            }, 300);
+        }, 3000);
+    }
+
+    async function saveSettings(event) {
+        event.preventDefault();
+        
+        const payload = {
+            groq_model: document.getElementById("default-model").value,
+            groq_api_key: document.getElementById("groq-api-key").value,
+            elevenlabs_api_key: document.getElementById("elevenlabs-key").value,
+            deepgram_api_key: document.getElementById("deepgram-key").value,
+            twilio_account_sid: document.getElementById("twilio-sid").value,
+            twilio_auth_token: document.getElementById("twilio-token").value,
+            default_order_phone_number: document.getElementById("twilio-phone").value,
+            trial_quota: parseInt(document.getElementById("trial-quota").value) || 100,
+            pro_quota: parseInt(document.getElementById("pro-quota").value) || 1000,
+            payment_account_name: document.getElementById("payment-account-name").value,
+            payment_account_number: document.getElementById("payment-account-number").value,
+            monthly_price: parseFloat(document.getElementById("monthly-price").value) || 5000
+        };
+        
+        try {
+            const response = await fetch("/superadmin/settings", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                showToast("Settings successfully saved and synchronized across agent instances!");
+                // Reload after short delay to show updated masked keys
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1200);
+            } else {
+                showToast("Error: " + (data.error || "Failed to save settings"), true);
+            }
+        } catch (err) {
+            showToast("Failed to connect to backend", true);
+        }
+    }
+</script>
+{% endblock %}
+{% endblock %}

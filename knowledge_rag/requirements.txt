@@ -1,0 +1,20 @@
+# --- Core pipeline ---
+python-dotenv==1.0.1
+pymupdf==1.24.10          # PDF native text extraction + page-to-image rendering
+Pillow==10.4.0            # image handling
+
+# --- OpenAI-compatible client (talks to Qwen2.5-VL via Ollama on your GPU machine) ---
+openai>=1.50.0
+
+# --- Local embeddings + vector store ---
+sentence-transformers==3.1.1
+chromadb==0.5.15
+
+# --- API layer (voice call agent integration point) ---
+fastapi==0.115.0
+uvicorn==0.31.0
+python-multipart==0.0.12  # required by FastAPI for file uploads
+
+# --- Knowledge console interface (scripts/knowledge_console.py) ---
+streamlit==1.39.0
+posthog>=2.4.0,<6.0.0

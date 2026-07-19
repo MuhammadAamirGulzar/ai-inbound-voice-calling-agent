@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}OrderSaathi Dashboard{% endblock %}</title>
+    <!-- Inter Font -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="/static/admin/style.css">
+    <style>
+        /* Force Notification Styles */
+        .notification-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background-color: var(--surface); border-radius: var(--radius-md) var(--radius-md) 0 0; }
+        .notification-header-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+        .notification-clear-all { background: none; border: none; font-size: 12px; color: var(--primary); font-weight: 500; cursor: pointer; }
+        .notification-list { display: flex; flex-direction: column; }
+        .notification-item { display: flex; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer; text-decoration: none; color: inherit; transition: background-color 0.2s; }
+        .notification-item:hover { background-color: var(--background); }
+        .notification-item.unread { background-color: var(--primary-light); }
+        .notification-item-icon { font-size: 16px; color: var(--warning); margin-top: 2px; }
+        .notification-item-body { flex-grow: 1; display: flex; flex-direction: column; gap: 4px; }
+        .notification-item-text { font-size: 13px; font-weight: 500; color: var(--text-primary); line-height: 1.4; }
+        .notification-item-time { font-size: 11px; color: var(--text-secondary); }
+        .notification-empty { padding: 32px 16px; text-align: center; color: var(--text-secondary); font-size: 13px; }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <a href="/admin/dashboard" class="sidebar-brand">
+                    <i class="fa-solid fa-microphone-lines mr-2"></i>OrderSaathi
+                </a>
+            </div>
+            <nav class="sidebar-nav">
+                <ul class="nav-list">
+                    <li class="nav-item">
+                        <a href="/admin/dashboard" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">
+                            <i class="fa-solid fa-chart-pie nav-icon"></i>Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/call-history" class="nav-link {% if active_page == 'call-history' or active_page == 'call-detail' %}active{% endif %}">
+                            <i class="fa-solid fa-phone-history nav-icon"></i>Call History
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/orders" class="nav-link {% if active_page == 'orders' or active_page == 'order-detail' %}active{% endif %}">
+                            <i class="fa-solid fa-receipt nav-icon"></i>Orders
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/menu" class="nav-link {% if active_page == 'menu' %}active{% endif %}">
+                            <i class="fa-solid fa-utensils nav-icon"></i>Menu
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/live-calls" class="nav-link {% if active_page == 'live-calls' %}active{% endif %}">
+                            <i class="fa-solid fa-phone-volume nav-icon" style="color: {% if active_page == 'live-calls' %}inherit{% else %}var(--success){% endif %};"></i>Live Calls
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/analytics" class="nav-link {% if active_page == 'analytics' %}active{% endif %}">
+                            <i class="fa-solid fa-chart-line nav-icon"></i>Analytics
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/billing" class="nav-link {% if active_page == 'billing' %}active{% endif %}">
+                            <i class="fa-solid fa-credit-card nav-icon"></i>Billing
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/agent-config" class="nav-link {% if active_page == 'agent-config' %}active{% endif %}">
+                            <i class="fa-solid fa-robot nav-icon"></i>Agent Configuration
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/admin/settings" class="nav-link {% if active_page == 'settings' %}active{% endif %}">
+                            <i class="fa-solid fa-cog nav-icon"></i>Settings
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+            <div class="sidebar-footer" style="padding: 20px; border-top: 1px solid var(--border);">
+                <a href="/logout" class="nav-link" style="color: var(--danger);">
+                    <i class="fa-solid fa-sign-out-alt nav-icon"></i>Log Out
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Wrapper -->
+        <div class="main-wrapper">
+            <!-- Top bar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <div class="restaurant-name">
+                        <i class="fa-solid fa-store mr-2" style="color: var(--primary);"></i>{{ current_user.restaurant.name if current_user.restaurant else 'OrderSaathi Partner' }}
+                    </div>
+                </div>
+                <div class="topbar-right">
+                    <!-- Global Agent Status Indicator -->
+                    <div id="topbar-agent-status" class="agent-status-badge live">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Agent: Live</span>
+                    </div>
+                    <!-- Notification Bell -->
+                    <div class="notification-dropdown-container">
+                        <button id="notification-bell-btn" style="background: none; border: none; cursor: pointer; color: var(--text-secondary); font-size: 18px; position: relative; padding: 8px; display: flex; align-items: center; justify-content: center; outline: none; margin-right: 8px;">
+                            <i class="fa-solid fa-bell"></i>
+                            <span id="notification-badge" style="display: none; position: absolute; top: 0px; right: 0px; background-color: var(--danger); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 9px; font-weight: 700; align-items: center; justify-content: center;">0</span>
+                        </button>
+                        <div id="notification-dropdown" class="notification-menu" style="display: none; position: absolute; top: 100%; right: 0; margin-top: 8px; width: 340px; background-color: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); z-index: 1000; max-height: 480px; overflow-y: auto;">
+                            <div class="notification-header">
+                                <span class="notification-header-title">Notifications</span>
+                                <button id="mark-all-read-btn" class="notification-clear-all" style="display: none;">Mark all as read</button>
+                            </div>
+                            <div id="notification-list" class="notification-list">
+                                <div class="notification-empty">No notifications.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="user-profile" style="display: flex; align-items: center; gap: 8px;">
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background-color: var(--primary-light); color: var(--primary); display: flex; align-items: center; justify-content: center; font-weight: 600;">
+                            {{ current_user.name[:2].upper() if current_user.name else 'AD' }}
+                        </div>
+                        <span style="font-size: 14px; font-weight: 500; color: var(--text-primary);">{{ current_user.name.title() if current_user.name else 'Owner' }}</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Main Content Area -->
+            <main class="main-content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+
+    <!-- Global Scripts -->
+    <script>
+        // Synchronize Agent toggle state across screens using localStorage
+        function updateTopbarAgentStatus(isLive) {
+            const topbarBadge = document.getElementById('topbar-agent-status');
+            if (!topbarBadge) return;
+            
+            const dot = topbarBadge.querySelector('.status-dot');
+            const text = topbarBadge.querySelector('.status-text');
+            
+            if (isLive) {
+                topbarBadge.className = 'agent-status-badge live';
+                text.textContent = 'Agent: Live';
+            } else {
+                topbarBadge.className = 'agent-status-badge paused';
+                text.textContent = 'Agent: Paused';
+            }
+        }
+
+        // Initialize state
+        document.addEventListener('DOMContentLoaded', () => {
+            const agentState = localStorage.getItem('agent_live');
+            const isLive = agentState === null ? true : agentState === 'true';
+            updateTopbarAgentStatus(isLive);
+            
+            // Check for toggle switches on page
+            const agentToggles = document.querySelectorAll('.agent-status-toggle');
+            agentToggles.forEach(toggle => {
+                toggle.checked = isLive;
+                toggle.addEventListener('change', (e) => {
+                    const nextState = e.target.checked;
+                    localStorage.setItem('agent_live', nextState);
+                    updateTopbarAgentStatus(nextState);
+                    
+                    // Sync other toggles on the page if multiple exist
+                    agentToggles.forEach(other => {
+                        if (other !== toggle) other.checked = nextState;
+                    });
+                });
+            });
+        });
+
+        // Notifications dropdown toggle and loading logic
+        document.addEventListener('DOMContentLoaded', () => {
+            const bellBtn = document.getElementById('notification-bell-btn');
+            const dropdown = document.getElementById('notification-dropdown');
+            const listContainer = document.getElementById('notification-list');
+            const badge = document.getElementById('notification-badge');
+            const markAllBtn = document.getElementById('mark-all-read-btn');
+
+            if (!bellBtn) return;
+
+            // Toggle dropdown
+            bellBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isVisible = dropdown.style.display === 'block';
+                dropdown.style.display = isVisible ? 'none' : 'block';
+                if (!isVisible) {
+                    loadNotifications();
+                }
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!dropdown.contains(e.target) && e.target !== bellBtn && !bellBtn.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+
+            // Mark all read
+            markAllBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                try {
+                    const res = await fetch('/admin/notifications/read-all', { method: 'POST' });
+                    if (res.ok) {
+                        loadNotifications();
+                    }
+                } catch (err) {
+                    console.error('Error marking all as read:', err);
+                }
+            });
+
+            async function loadNotifications() {
+                try {
+                    const res = await fetch('/admin/notifications');
+                    if (res.ok) {
+                        const data = await res.json();
+                        updateNotificationUI(data.notifications, data.unread_count);
+                    }
+                } catch (err) {
+                    console.error('Error loading notifications:', err);
+                }
+            }
+
+            function updateNotificationUI(notifications, unreadCount) {
+                // Update badge
+                if (unreadCount > 0) {
+                    badge.textContent = unreadCount;
+                    badge.style.display = 'flex';
+                    markAllBtn.style.display = 'block';
+                } else {
+                    badge.style.display = 'none';
+                    markAllBtn.style.display = 'none';
+                }
+
+                // Render list
+                if (notifications.length === 0) {
+                    listContainer.innerHTML = '<div class="notification-empty">No notifications.</div>';
+                    return;
+                }
+
+                listContainer.innerHTML = '';
+                notifications.forEach(n => {
+                    const item = document.createElement('div');
+                    item.className = `notification-item ${n.is_read ? '' : 'unread'}`;
+                    
+                    // Clicking the notification redirects or marks read
+                    item.addEventListener('click', async (e) => {
+                        if (e.target.closest('.notification-dismiss-btn')) return;
+
+                        e.preventDefault();
+                        if (!n.is_read) {
+                            await markAsRead(n.id);
+                        }
+                        
+                        if (n.related_order_id) {
+                            window.location.href = `/admin/order-detail?id=${n.related_order_id}`;
+                        } else {
+                            loadNotifications();
+                        }
+                    });
+
+                    const iconMap = {
+                        'missing_fulfillment_url': 'fa-solid fa-triangle-exclamation',
+                        'plan_change_request_sent': 'fa-solid fa-exchange-alt',
+                        'plan_change_approved': 'fa-solid fa-circle-check',
+                        'plan_change_rejected': 'fa-solid fa-circle-xmark'
+                    };
+                    const iconClass = iconMap[n.type] || 'fa-solid fa-info-circle';
+                    const iconColor = n.type === 'plan_change_approved' ? 'color: var(--success)' : 
+                                      n.type === 'plan_change_rejected' ? 'color: var(--danger)' : '';
+                    
+                    item.innerHTML = `
+                        <div class="notification-item-icon">
+                            <i class="${iconClass}" style="${iconColor}"></i>
+                        </div>
+                        <div class="notification-item-body">
+                            <span class="notification-item-text">${n.message}</span>
+                            <span class="notification-item-time">${n.time_str}</span>
+                        </div>
+                        <div class="notification-item-actions">
+                        </div>
+                    `;
+
+                    const dismissBtn = item.querySelector('.notification-dismiss-btn');
+                    if (dismissBtn) {
+                        dismissBtn.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            await markAsRead(n.id);
+                            loadNotifications();
+                        });
+                    }
+
+                    listContainer.appendChild(item);
+                });
+            }
+
+            async function markAsRead(id) {
+                try {
+                    await fetch(`/admin/notifications/${id}/read`, { method: 'POST' });
+                } catch (err) {
+                    console.error('Error marking notification as read:', err);
+                }
+            }
+
+            // Initial and interval check
+            loadNotifications();
+            setInterval(loadNotifications, 30000); // Check every 30s
+        });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,208 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-analytics' %}
+
+{% block title %}Platform Analytics - Super Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+#analytics-chart-wrap { position: relative; height: 200px; width: 100%; border-bottom: 2px solid var(--border); border-left: 2px solid var(--border); padding-left: 10px; }
+#bar-chart-wrap { position: relative; height: 200px; width: 100%; border-bottom: 2px solid var(--border); border-left: 2px solid var(--border); padding-left: 10px; }
+.y-label { position: absolute; left: 0; font-size: 10px; color: var(--text-secondary); transform: translateY(-50%); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Platform Analytics</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Aggregate metrics, growth performance, and leaderboard insights for the OrderSaathi SaaS platform.
+        </div>
+    </div>
+    <div>
+        <select id="days-filter" class="form-control" style="width: 180px;" onchange="loadAnalytics()">
+            <option value="7">Last 7 Days</option>
+            <option value="30">Last 30 Days</option>
+            <option value="90">Last 90 Days</option>
+            <option value="180">Last 6 Months</option>
+            <option value="365">Last 1 Year</option>
+        </select>
+    </div>
+</div>
+
+<div class="kpi-grid" style="margin-bottom: 24px;">
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Call Volume Growth (MoM)</span>
+            <i class="fa-solid fa-chart-line" style="color: var(--primary);"></i>
+        </div>
+        <div class="kpi-value">
+            {% if mom_growth >= 0 %}+{% endif %}{{ mom_growth }}%
+        </div>
+        <div class="kpi-trend {% if mom_growth >= 0 %}up{% else %}down{% endif %}">
+            <i class="fa-solid fa-arrow-trend-{% if mom_growth >= 0 %}up{% else %}down{% endif %}"></i>
+            {{ all_calls }} total calls
+        </div>
+    </div>
+    
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Monthly Onboardings</span>
+            <i class="fa-solid fa-user-plus" style="color: var(--success);"></i>
+        </div>
+        <div class="kpi-value">{{ this_month_onboards }}</div>
+        <div class="kpi-trend {% if this_month_onboards >= last_month_onboards %}up{% else %}down{% endif %}">
+            <i class="fa-solid fa-arrow-trend-{% if this_month_onboards >= last_month_onboards %}up{% else %}down{% endif %}"></i>
+            {% if this_month_onboards >= last_month_onboards %}+{{ this_month_onboards - last_month_onboards }}{% else %}-{{ last_month_onboards - this_month_onboards }}{% endif %} vs last month
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Suspended / Churn</span>
+            <i class="fa-solid fa-user-minus" style="color: var(--danger);"></i>
+        </div>
+        <div class="kpi-value">{{ churn_rate }}%</div>
+        <div class="kpi-trend down">
+            <i class="fa-solid fa-ban"></i> {{ suspended_count }} account(s) suspended
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    <!-- Call Volume Growth Chart (monthly bar) -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Call Volume Growth (Monthly)</div>
+        </div>
+        <div class="card-body">
+            <div id="bar-chart-wrap">
+                <svg id="bar-chart-svg" width="100%" height="100%" preserveAspectRatio="none"></svg>
+            </div>
+            <div id="bar-chart-labels" style="display: flex; justify-content: space-around; font-size: 11px; color: var(--text-secondary); margin-top: 8px;"></div>
+        </div>
+    </div>
+
+    <!-- Onboarding & Cancellation Trends -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Onboarding Trend (Last 6 Months)</div>
+        </div>
+        <div class="card-body">
+            <div id="analytics-chart-wrap">
+                <svg id="analytics-chart-svg" width="100%" height="100%" viewBox="0 0 500 150" preserveAspectRatio="none">
+                    <path id="onboard-path" d="" fill="none" style="stroke: var(--success);" stroke-width="3"/>
+                </svg>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+                <div style="display: flex; gap: 16px; font-size: 12px;">
+                    <span style="color: var(--success);"><span style="display:inline-block; width:10px; height:10px; background-color: var(--success); border-radius:50%; margin-right:4px;"></span>New Onboardings</span>
+                </div>
+                <div id="onboard-labels" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); width: 60%;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Leaderboard -->
+<div class="card" style="margin-top: 24px;">
+    <div class="card-header">
+        <div class="card-title">Tenant Leaderboard (Most Active by Call Volume)</div>
+    </div>
+    <div class="table-responsive">
+        <table class="table" id="leaderboard-table">
+            <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Restaurant Name</th>
+                    <th>Total Calls</th>
+                    <th>Total Orders</th>
+                    <th>Avg. Call Duration</th>
+                    <th>Conversion Rate</th>
+                </tr>
+            </thead>
+            <tbody id="leaderboard-body">
+                <tr><td colspan="6" style="text-align:center; padding: 24px; color: var(--text-secondary);">Loading data...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function loadAnalytics() {
+    const days = document.getElementById('days-filter').value;
+
+    try {
+        const res = await fetch(`/superadmin/api/analytics?days=${days}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // --- Bar Chart: Monthly call volume ---
+        const barSvg = document.getElementById('bar-chart-svg');
+        const barLabels = document.getElementById('bar-chart-labels');
+        const mc = data.monthly_calls;
+        const ml = data.monthly_labels;
+        const maxBar = Math.max(...mc, 1);
+        const barW = 500 / mc.length;
+        let barContent = '';
+        const svgH = 150;
+
+        mc.forEach((val, i) => {
+            const barH = Math.max(2, (val / maxBar) * (svgH - 20));
+            const x = i * barW + barW * 0.15;
+            const y = svgH - barH;
+            const w = barW * 0.7;
+            const alpha = i === mc.length - 1 ? 1 : 0.5;
+            barContent += `<rect x="${x}" y="${y}" width="${w}" height="${barH}" fill="var(--primary)" opacity="${alpha}" rx="3"/>`;
+            barContent += `<text x="${x + w/2}" y="${y - 4}" text-anchor="middle" font-size="9" fill="var(--text-secondary)">${val}</text>`;
+        });
+        barSvg.setAttribute('viewBox', `0 0 500 ${svgH}`);
+        barSvg.innerHTML = barContent;
+        barLabels.innerHTML = ml.map(l => `<span>${l}</span>`).join('');
+
+        // --- Onboarding Line Chart ---
+        const od = data.onboarding_data;
+        const maxO = Math.max(...od, 1);
+        const odW = 500 / (od.length - 1);
+        let pathD = '';
+        od.forEach((val, i) => {
+            const cx = i * odW;
+            const cy = 150 - (val / maxO) * 130;
+            pathD += (i === 0 ? `M ${cx} ${cy}` : ` L ${cx} ${cy}`);
+        });
+        document.getElementById('onboard-path').setAttribute('d', pathD);
+
+        const onboardLabels = document.getElementById('onboard-labels');
+        onboardLabels.innerHTML = data.monthly_labels.map(l => `<span>${l}</span>`).join('');
+
+        // --- Leaderboard ---
+        const tbody = document.getElementById('leaderboard-body');
+        if (!data.leaderboard || data.leaderboard.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-secondary);">No data available yet.</td></tr>';
+            return;
+        }
+        const rankColors = ['var(--primary)', 'var(--primary)', '#9ca3af'];
+        tbody.innerHTML = data.leaderboard.map((r, i) => {
+            const rankColor = i < 3 ? rankColors[i] : 'var(--text-secondary)';
+            const convBadge = r.conversion_rate >= 50
+                ? `<span class="badge badge-success">${r.conversion_rate}%</span>`
+                : `<span class="badge badge-danger">${r.conversion_rate}%</span>`;
+            return `<tr>
+                <td class="font-bold" style="color:${rankColor};">#${i+1}</td>
+                <td class="font-semibold">${r.name}</td>
+                <td>${r.total_calls.toLocaleString()}</td>
+                <td>${r.total_orders.toLocaleString()}</td>
+                <td>${r.avg_duration}</td>
+                <td>${convBadge}</td>
+            </tr>`;
+        }).join('');
+    } catch(e) {
+        console.error('Analytics load error:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadAnalytics);
+</script>
+{% endblock %}

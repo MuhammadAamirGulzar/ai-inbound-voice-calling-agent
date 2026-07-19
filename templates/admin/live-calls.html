@@ -1,0 +1,234 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'live-calls' %}
+
+{% block title %}Live Calls - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Live Calls in Progress</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Monitor active calls being handled by the AI agent in real-time
+        </div>
+    </div>
+    <!-- Simulation controls to demonstrate the two states -->
+    <a href="/test-call" target="_blank" class="btn btn-primary"><i class="fa-solid fa-play mr-2"></i>Simulate Inbound Call</a>
+</div>
+
+{% if active_calls %}
+    {% for call in active_calls %}
+        <div class="card" style="border-left: 4px solid var(--success); margin-bottom: 16px;">
+            <div class="card-body" style="display: flex; justify-content: space-between; align-items: center; padding: 20px 24px;">
+                <div style="display: flex; align-items: center; gap: 20px;">
+                    <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background-color: var(--success-bg); border-radius: 50%;">
+                        <i class="fa-solid fa-phone" style="color: var(--success); font-size: 18px;"></i>
+                        <span style="position: absolute; width: 100%; height: 100%; border: 2px solid var(--success); border-radius: 50%; animation: pulse-ring 1.5s infinite; opacity: 0;"></span>
+                    </div>
+                    <div>
+                        <div class="font-bold" style="font-size: 16px; color: var(--text-primary);">{{ call.caller_number or 'Unknown Caller' }}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+                            <span class="badge badge-success" style="font-size: 10px; padding: 2px 8px; font-weight: 600;">IN PROGRESS</span>
+                            <span>• Connecting via Twilio Inbound Stream</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display: flex; align-items: center; gap: 24px;">
+                    <div style="text-align: right;">
+                        <div class="metadata-label" style="font-size: 11px; margin-bottom: 2px;">ELAPSED TIME</div>
+                        <div class="font-bold live-real-timer" data-start="{{ call.timestamp.isoformat() if call.timestamp else '' }}" style="font-size: 18px; color: var(--text-primary); font-variant-numeric: tabular-nums;">0m 00s</div>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-danger" onclick="hangupCall('{{ call.session_id }}')" style="padding: 8px 12px;"><i class="fa-solid fa-phone-slash mr-2"></i>Hang Up</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background-color: var(--background); padding: 16px 24px; border-top: 1px solid var(--border); font-size: 13px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="color: var(--text-secondary); display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-robot" style="color: var(--primary);"></i>
+                        <strong style="color: var(--text-primary);">AI Assistant Status:</strong>
+                        <span>{{ call.chat_data[-1].get('text', 'Processing...') if call.chat_data else 'Initiating call...' }}</span>
+                    </div>
+                    <span style="font-size: 11px; font-weight: 500; color: var(--primary);">Updating live...</span>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+{% endif %}
+
+<!-- Empty State Container (visible when no calls are active) -->
+<div class="card" id="empty-state-card" style="padding: 48px 0; {% if active_calls %}display: none;{% endif %}">
+    <div class="empty-state">
+        <div class="empty-state-icon">
+            <i class="fa-solid fa-phone-volume" style="color: var(--text-secondary);"></i>
+        </div>
+        <h3 class="empty-state-title">No active calls right now</h3>
+        <p class="empty-state-text">
+            When a customer calls {{ current_user.restaurant.name }}, the AI agent will answer and the live tracking will display here.
+        </p>
+    </div>
+</div>
+
+<!-- Active Calls List Container (hidden by default until simulated) -->
+<div id="active-calls-container" style="display: none;">
+    <div class="card" style="border-left: 4px solid var(--success);">
+        <div class="card-body" style="display: flex; justify-content: space-between; align-items: center; padding: 20px 24px;">
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <!-- Pulsing icon -->
+                <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background-color: var(--success-bg); border-radius: 50%;">
+                    <i class="fa-solid fa-phone" style="color: var(--success); font-size: 18px;"></i>
+                    <span style="position: absolute; width: 100%; height: 100%; border: 2px solid var(--success); border-radius: 50%; animation: pulse-ring 1.5s infinite; opacity: 0;"></span>
+                </div>
+                <div>
+                    <div class="font-bold" style="font-size: 16px; color: var(--text-primary);" id="live-phone-num">+92 300 7654321</div>
+                    <div style="font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+                        <span class="badge badge-success" style="font-size: 10px; padding: 2px 8px; font-weight: 600;">IN PROGRESS</span>
+                        <span>• Connecting via Twilio Inbound Stream</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 24px;">
+                <div style="text-align: right;">
+                    <div class="metadata-label" style="font-size: 11px; margin-bottom: 2px;">ELAPSED TIME</div>
+                    <div class="font-bold" style="font-size: 18px; color: var(--text-primary); font-variant-numeric: tabular-nums;" id="live-timer">0m 00s</div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-danger" id="btn-hangup" style="padding: 8px 12px;"><i class="fa-solid fa-phone-slash mr-2"></i>Hang Up</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Live status timeline / AI thought stream -->
+        <div style="background-color: var(--background); padding: 16px 24px; border-top: 1px solid var(--border); font-size: 13px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div style="color: var(--text-secondary); display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-robot" style="color: var(--primary);"></i>
+                    <strong style="color: var(--text-primary);">AI Assistant Status:</strong>
+                    <span id="ai-live-bubble">Greeting the customer in Urdu/English mix...</span>
+                </div>
+                <span style="font-size: 11px; font-weight: 500; color: var(--primary);">Updating live...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_css %}
+<style>
+    @keyframes pulse-ring {
+        0% { transform: scale(0.95); opacity: 0.8; }
+        100% { transform: scale(1.4); opacity: 0; }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const simBtn = document.getElementById('btn-simulate-call');
+    const hangBtn = document.getElementById('btn-hangup');
+    const emptyCard = document.getElementById('empty-state-card');
+    const activeContainer = document.getElementById('active-calls-container');
+    const timerText = document.getElementById('live-timer');
+    const thoughtBubble = document.getElementById('ai-live-bubble');
+    const phoneNum = document.getElementById('live-phone-num');
+
+    let duration = 0;
+    let timerInterval;
+
+    const phones = ['+92 300 7654321', '+92 321 8889999', '+92 345 1112222', '+92 333 4445555'];
+    const thoughts = [
+        "Greeting the customer: 'Assalam-o-Alaikum, Khyber Shinwari se AI bol rahi hoon.'",
+        "Listening to customer's order inquiry...",
+        "Searching menu reference for 'Chicken Karahi Half' and giving price PKR 1,100.",
+        "Listening: Customer wants to add 4 Roghni Naans and cold drink...",
+        "Summarizing order: 1x Chicken Karahi Half, 4x Naan, 1x Coke...",
+        "Confirming price PKR 2,450 and asking for delivery address...",
+        "Customer provided address: House 4B, Street 3, G-11, Islamabad...",
+        "Processing final confirmation and saying Allah Hafiz."
+    ];
+
+    function startSimulation() {
+        emptyCard.style.display = 'none';
+        activeContainer.style.display = 'block';
+        
+        // Pick a random phone
+        phoneNum.textContent = phones[Math.floor(Math.random() * phones.length)];
+        
+        duration = 0;
+        updateTimerDisplay();
+        
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            duration++;
+            updateTimerDisplay();
+            
+            // Cycle AI thoughts based on elapsed duration
+            let idx = Math.floor(duration / 8);
+            if (idx >= thoughts.length) {
+                idx = thoughts.length - 1;
+            }
+            thoughtBubble.textContent = thoughts[idx];
+        }, 1000);
+    }
+
+    function stopSimulation() {
+        clearInterval(timerInterval);
+        activeContainer.style.display = 'none';
+        emptyCard.style.display = 'block';
+    }
+
+    function updateTimerDisplay() {
+        let mins = Math.floor(duration / 60);
+        let secs = duration % 60;
+        timerText.textContent = `${mins}m ${secs < 10 ? '0' + secs : secs}s`;
+    }
+
+    if (simBtn) simBtn.addEventListener('click', startSimulation);
+    if (hangBtn) hangBtn.addEventListener('click', stopSimulation);
+
+    // Real call timers
+    setInterval(() => {
+        document.querySelectorAll('.live-real-timer').forEach(el => {
+            const startStr = el.getAttribute('data-start');
+            if (startStr) {
+                const hasTZ = /([+-]\d{2}:\d{2}|Z)$/.test(startStr);
+                const startTime = new Date(hasTZ ? startStr : startStr + 'Z');
+                const diff = Math.floor((new Date() - startTime) / 1000);
+                if (diff >= 0) {
+                    let mins = Math.floor(diff / 60);
+                    let secs = diff % 60;
+                    el.textContent = `${mins}m ${secs < 10 ? '0' + secs : secs}s`;
+                }
+            }
+        });
+    }, 1000);
+
+    async function hangupCall(sessionId) {
+        if (!sessionId) return;
+        if (!confirm("Are you sure you want to hang up this call?")) return;
+        
+        try {
+            const response = await fetch('/admin/hangup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                alert("Call hung up successfully.");
+                window.location.reload();
+            } else {
+                alert("Failed to hang up call: " + (data.error || "Unknown error"));
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Network error occurred while trying to hang up call.");
+        }
+    }
+</script>
+{% endblock %}
+{% endblock %}

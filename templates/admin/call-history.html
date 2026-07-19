@@ -1,0 +1,159 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'call-history' %}
+
+{% block title %}Call History - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Call History</h1>
+    <div style="font-size: 14px; color: var(--text-secondary);">
+        Track and review all AI-handled customer calls
+    </div>
+</div>
+
+<!-- Filter and Search Bar -->
+<div class="filter-bar">
+    <div class="filter-group" style="flex: 1; min-width: 240px;">
+        <i class="fa-solid fa-search" style="color: var(--text-secondary); margin-right: -28px; z-index: 5; position: relative;"></i>
+        <input class="form-control" type="text" id="phone-search" placeholder="Search by caller phone number..." style="padding-left: 36px;">
+    </div>
+    
+    <div class="filter-group">
+        <label for="status-filter" style="margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">Status:</label>
+        <select class="form-control" id="status-filter" style="width: auto; padding: 6px 12px;">
+            <option value="all">All Statuses</option>
+            <option value="completed">Completed</option>
+            <option value="missed">Missed</option>
+            <option value="in-progress">In Progress</option>
+        </select>
+    </div>
+
+    <div class="filter-group">
+        <label for="order-filter" style="margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">Order Result:</label>
+        <select class="form-control" id="order-filter" style="width: auto; padding: 6px 12px;">
+            <option value="all">All Results</option>
+            <option value="yes">Order Booked</option>
+            <option value="no">No Order</option>
+        </select>
+    </div>
+
+    <div class="filter-group">
+        <label for="date-filter" style="margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">Date Range:</label>
+        <select class="form-control" id="date-filter" style="width: auto; padding: 6px 12px;">
+            <option value="all" selected>All Time</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+        </select>
+    </div>
+</div>
+
+<!-- History Table Card -->
+<div class="card">
+    <div class="table-responsive">
+        <table class="table" id="calls-table">
+            <thead>
+                <tr>
+                    <th>Caller Number</th>
+                    <th>Date & Time</th>
+                    <th>Duration</th>
+                    <th>Status</th>
+                    <th>Order Booked?</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for call in calls %}
+                <tr data-phone="{{ call.caller_number }}" data-status="{{ call.status_lower }}" data-order="{{ call.order.exists }}" data-date="{{ call.date_cat }}">
+                    <td class="font-semibold">{{ call.caller_number }}</td>
+                    <td>{{ call.time_str }}</td>
+                    <td>{{ call.duration_str }}</td>
+                    <td>
+                        {% if call.status_lower == 'completed' %}
+                        <span class="badge badge-success">Completed</span>
+                        {% elif call.status_lower == 'missed' %}
+                        <span class="badge badge-danger">Missed</span>
+                        {% elif call.status_lower == 'in_progress' or call.status_lower == 'in-progress' %}
+                        <span class="badge badge-warning">In Progress</span>
+                        {% else %}
+                        <span class="badge badge-danger">{{ call.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if call.order.exists == 'yes' %}
+                        <span style="color: var(--success); font-weight: 600;"><i class="fa-solid fa-circle-check"></i> {{ call.order.text }}</span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark"></i> No</span>
+                        {% endif %}
+                    </td>
+                    <td><a href="/admin/call-detail?id={{ call.id }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;"><i class="fa-solid fa-eye mr-2"></i>Details</a></td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 24px;">No calls logged yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // Search and filtering client-side logic to simulate live dashboard behavior
+    const searchInput = document.getElementById('phone-search');
+    const statusFilter = document.getElementById('status-filter');
+    const orderFilter = document.getElementById('order-filter');
+    const dateFilter = document.getElementById('date-filter');
+    const table = document.getElementById('calls-table');
+    const rows = table.querySelectorAll('tbody tr');
+
+    function filterTable() {
+        const query = searchInput.value.toLowerCase();
+        const statusVal = statusFilter.value;
+        const orderVal = orderFilter.value;
+        const dateVal = dateFilter.value;
+
+        rows.forEach(row => {
+            const phone = row.getAttribute('data-phone') ? row.getAttribute('data-phone').toLowerCase() : '';
+            const status = row.getAttribute('data-status') || '';
+            const order = row.getAttribute('data-order') || '';
+            const dateCat = row.getAttribute('data-date') || '';
+
+            const matchesQuery = phone.includes(query);
+            
+            const normalizedStatus = status.replace('_', '-');
+            const normalizedStatusVal = statusVal.replace('_', '-');
+            const matchesStatus = statusVal === 'all' || normalizedStatus === normalizedStatusVal;
+            
+            const matchesOrder = orderVal === 'all' || order === orderVal;
+
+            let matchesDate = true;
+            if (dateVal !== 'all') {
+                if (dateVal === 'today') {
+                    matchesDate = dateCat === 'today';
+                } else if (dateVal === 'yesterday') {
+                    matchesDate = dateCat === 'yesterday';
+                } else if (dateVal === '7days') {
+                    matchesDate = ['today', 'yesterday', '7days'].includes(dateCat);
+                } else if (dateVal === '30days') {
+                    matchesDate = ['today', 'yesterday', '7days', '30days'].includes(dateCat);
+                }
+            }
+
+            if (matchesQuery && matchesStatus && matchesOrder && matchesDate) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    searchInput.addEventListener('input', filterTable);
+    statusFilter.addEventListener('change', filterTable);
+    orderFilter.addEventListener('change', filterTable);
+    dateFilter.addEventListener('change', filterTable);
+</script>
+{% endblock %}
+{% endblock %}

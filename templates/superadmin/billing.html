@@ -1,0 +1,419 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-billing' %}
+
+{% block title %}Subscriptions & Billing - Super Admin{% endblock %}
+
+{% block content %}
+<style>
+    @keyframes modalFadeIn {
+        from { opacity: 0; transform: translateY(-20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .modal-backdrop {
+        display: none; 
+        position: fixed; 
+        top: 0; left: 0; 
+        width: 100%; height: 100%; 
+        background: rgba(0, 0, 0, 0.7); 
+        z-index: 1000; 
+        align-items: center; 
+        justify-content: center; 
+        backdrop-filter: blur(4px);
+    }
+    .modal-card {
+        background: #ffffff;
+        color: #1e293b;
+        border: 1px solid var(--border, rgba(255,255,255,0.08));
+        border-radius: 12px;
+        width: 100%;
+        max-width: 450px;
+        margin: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        animation: modalFadeIn 0.2s ease-out;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        color: #475569;
+        font-weight: 500;
+    }
+</style>
+
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Subscriptions & Billing</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Manage pricing tiers, subscription extensions, and trial periods across all tenants.
+        </div>
+    </div>
+</div>
+
+<div class="kpi-grid" style="margin-bottom: 24px;">
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Total Recurring Revenue (MRR)</span>
+            <i class="fa-solid fa-money-bill-wave" style="color: var(--success);"></i>
+        </div>
+        <div class="kpi-value">PKR {{ "{:,}".format(mrr) }}</div>
+        <div class="kpi-trend up">
+            <i class="fa-solid fa-arrow-trend-up"></i> Active subscriptions MRR
+        </div>
+    </div>
+    
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Paid Subscriptions</span>
+            <i class="fa-solid fa-credit-card" style="color: var(--primary);"></i>
+        </div>
+        <div class="kpi-value">{{ paid_count }}</div>
+        <div class="kpi-trend up">
+            <i class="fa-solid fa-user-check"></i> Standard & Enterprise tiers
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Trial Accounts</span>
+            <i class="fa-solid fa-hourglass-half" style="color: var(--warning);"></i>
+        </div>
+        <div class="kpi-value">{{ trial_count }}</div>
+        <div class="kpi-trend down">
+            <i class="fa-solid fa-arrow-trend-down"></i> Currently on free trial
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="card-title">All Subscriptions</div>
+        <div style="font-size: 13px; color: var(--text-secondary);">Showing {{ restaurants|length }} active profiles</div>
+    </div>
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Restaurant</th>
+                    <th>Plan Tier</th>
+                    <th>Billing Status</th>
+                    <th>Next Invoice Date / Expiry</th>
+                    <th>Telephony Usage</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for restaurant in restaurants %}
+                <tr>
+                    <td class="font-semibold">{{ restaurant.name }}</td>
+                    <td>
+                        <span class="badge" style="
+                            {% if restaurant.is_free_plan %}background-color: var(--primary-light); color: var(--primary);
+                            {% elif restaurant.subscription_plan == 'monthly' %}background-color: var(--success-bg); color: var(--success);
+                            {% elif restaurant.subscription_plan == 'six_monthly' %}background-color: var(--success-bg); color: var(--success);
+                            {% elif restaurant.subscription_plan == 'annually' %}background-color: var(--success-bg); color: var(--success);
+                            {% else %}background-color: #374151; color: white;{% endif %}
+                        ">
+                            {% if restaurant.is_free_plan %}Free Trial
+                            {% elif restaurant.subscription_plan == 'monthly' %}Monthly (PKR {{ '{:,.0f}'.format(monthly_price) }}/mo)
+                            {% elif restaurant.subscription_plan == 'six_monthly' %}6-Month (PKR {{ '{:,.0f}'.format(six_monthly_price / 6) }}/mo)
+                            {% elif restaurant.subscription_plan == 'annually' %}Annual (PKR {{ '{:,.0f}'.format(annually_price / 12) }}/mo)
+                            {% else %}Enterprise{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        {% if restaurant.is_suspended %}
+                            <span class="badge badge-danger">Suspended</span>
+                        {% else %}
+                            {% if restaurant.is_free_plan %}
+                                <span class="badge badge-success">Trial Active</span>
+                            {% else %}
+                                <span class="badge badge-success">Paid</span>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {{ restaurant.computed_expiry }}
+                    </td>
+                    <td>
+                        <div style="width: 140px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+                                <span>{{ restaurant.computed_used }} mins / {{ restaurant.computed_limit }} limit</span>
+                                <strong>{{ restaurant.computed_percentage }}%</strong>
+                            </div>
+                            <div class="progress-bar-container" style="height: 6px;">
+                                <div class="progress-bar-fill" style="width: {{ restaurant.computed_percentage }}%; {% if restaurant.is_suspended %}background-color: var(--danger);{% endif %}"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <button onclick="openSubscriptionModal({{ restaurant.id }}, '{{ restaurant.name|escape }}', '{{ restaurant.subscription_plan }}', {{ 'true' if restaurant.is_free_plan else 'false' }}, '{{ restaurant.trial_expiration_date.strftime('%Y-%m-%d') if restaurant.trial_expiration_date else '' }}', {{ restaurant.assigned_minutes }}, {{ restaurant.used_minutes }})" class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;">Modify</button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 24px; color: var(--text-secondary);">No restaurants found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Subscription Actions Modal Backdrop -->
+<div id="action-modal" class="modal-backdrop">
+    <div class="modal-card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
+            <div class="card-title" id="modal-title" style="margin: 0; font-size: 16px;">Modify Subscription</div>
+            <button onclick="closeModal()" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 18px; padding: 0;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="card-body" style="padding: 20px;">
+            <!-- Initial Selection Screen: Change Plan or Extend Trial -->
+            <div id="modal-options-screen" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px;">
+                <div style="font-size: 14px; margin-bottom: 12px; color: var(--text-secondary);">
+                    Tenant: <strong id="modal-rest-name" style="color: var(--text-primary);"></strong>
+                </div>
+                <button onclick="showChangePlanForm()" class="btn btn-secondary" style="justify-content: center; height: 42px;"><i class="fa-solid fa-credit-card mr-2"></i>Change Subscription Plan</button>
+                <button id="btn-extend-trial-option" onclick="showExtendTrialForm()" class="btn btn-secondary" style="justify-content: center; height: 42px;"><i class="fa-solid fa-hourglass-half mr-2"></i>Extend Free Trial</button>
+                <button onclick="showAdjustQuotasForm()" class="btn btn-secondary" style="justify-content: center; height: 42px;"><i class="fa-solid fa-clock mr-2"></i>Adjust Quotas / Minutes</button>
+            </div>
+
+            <!-- Change Plan Screen -->
+            <div id="modal-content-plan" style="display: none;">
+                <form id="plan-form" onsubmit="handlePlanSubmit(event)">
+                    <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+                        Updating plan for <strong id="modal-plan-rest-name" style="color: var(--text-primary);"></strong>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="modal_plan_selection">Select Plan</label>
+                        <select class="form-control" id="modal_plan_selection" required>
+                            <option value="monthly">Monthly</option>
+                            <option value="six_monthly">6 Monthly</option>
+                            <option value="annually">Annually</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 20px; display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="modal_is_free_plan" style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);">
+                        <label for="modal_is_free_plan" style="font-size: 13px; color: var(--text-secondary); cursor: pointer; margin-bottom: 0; user-select: none;">Enable Free Trial (2 Weeks)</label>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button type="button" onclick="showOptionsScreen()" class="btn btn-secondary" style="height: 38px;">Back</button>
+                        <button type="submit" class="btn btn-primary" style="height: 38px;">Update Plan</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Extend Trial Screen -->
+            <div id="modal-content-trial" style="display: none;">
+                <form id="trial-form" onsubmit="handleTrialSubmit(event)">
+                    <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+                        Extending trial expiration for <strong id="modal-trial-rest-name" style="color: var(--text-primary);"></strong>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="trial_expiration_date_picker">Select Trial Expiration Date</label>
+                        <input class="form-control" type="date" id="trial_expiration_date_picker" required>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button type="button" onclick="showOptionsScreen()" class="btn btn-secondary" style="height: 38px;">Back</button>
+                        <button type="submit" class="btn btn-primary" style="height: 38px;">Extend Trial</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Adjust Quotas Modal Content -->
+            <div id="modal-content-quota" style="display: none;">
+                <form id="quota-adjustment-form" onsubmit="handleQuotaSubmit(event)">
+                    <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+                        Adjusting quotas for <strong id="modal-quota-rest-name" style="color: var(--text-primary);"></strong>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="modal_assigned_minutes">Assigned Minutes Limit</label>
+                        <input class="form-control" type="number" id="modal_assigned_minutes" required min="1">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="modal_used_minutes">Used Minutes</label>
+                        <input class="form-control" type="number" step="0.1" id="modal_used_minutes" required min="0">
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button type="button" onclick="showOptionsScreen()" class="btn btn-secondary" style="height: 38px;">Back</button>
+                        <button type="submit" class="btn btn-primary" style="height: 38px;">Save Quotas</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    let currentRestaurantId = null;
+    let currentRestaurantName = "";
+    let currentPlan = "";
+    let currentIsFree = false;
+    let currentExpDate = "";
+    let currentAssigned = 0;
+    let currentUsed = 0;
+
+    function hideAllModalContents() {
+        document.getElementById('modal-options-screen').style.display = 'none';
+        document.getElementById('modal-content-plan').style.display = 'none';
+        document.getElementById('modal-content-trial').style.display = 'none';
+        document.getElementById('modal-content-quota').style.display = 'none';
+    }
+
+    function openSubscriptionModal(id, name, plan, isFree, expDate, assigned, used) {
+        currentRestaurantId = id;
+        currentRestaurantName = name;
+        currentPlan = plan;
+        currentIsFree = isFree;
+        currentExpDate = expDate;
+        currentAssigned = assigned;
+        currentUsed = used;
+
+        document.getElementById('modal-rest-name').textContent = name;
+        
+        // Disable extend trial if not currently on free trial
+        const extendBtn = document.getElementById('btn-extend-trial-option');
+        if (isFree) {
+            extendBtn.removeAttribute('disabled');
+            extendBtn.setAttribute('title', 'Extend Free Trial duration');
+        } else {
+            extendBtn.setAttribute('disabled', 'true');
+            extendBtn.setAttribute('title', 'Tenant must be on free trial to extend it');
+        }
+
+        showOptionsScreen();
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('action-modal').style.display = 'none';
+    }
+
+    function showOptionsScreen() {
+        document.getElementById('modal-title').textContent = "Modify Subscription";
+        hideAllModalContents();
+        document.getElementById('modal-options-screen').style.display = 'flex';
+    }
+
+    function showChangePlanForm() {
+        document.getElementById('modal-title').textContent = "Change Subscription Plan";
+        document.getElementById('modal-plan-rest-name').textContent = currentRestaurantName;
+        
+        const freePlanCheckbox = document.getElementById("modal_is_free_plan");
+        const planSelection = document.getElementById("modal_plan_selection");
+
+        freePlanCheckbox.checked = currentIsFree;
+        
+        // Select matching dropdown option or fallback to monthly
+        if (currentPlan === 'six_monthly' || currentPlan === 'annually' || currentPlan === 'monthly') {
+            planSelection.value = currentPlan;
+        } else {
+            planSelection.value = 'monthly';
+        }
+
+        function togglePlanSelection() {
+            planSelection.disabled = freePlanCheckbox.checked;
+        }
+        
+        // Remove prior listener to prevent duplicates
+        freePlanCheckbox.onchange = togglePlanSelection;
+        togglePlanSelection();
+
+        hideAllModalContents();
+        document.getElementById('modal-content-plan').style.display = 'block';
+    }
+
+    function showExtendTrialForm() {
+        document.getElementById('modal-title').textContent = "Extend Free Trial";
+        document.getElementById('modal-trial-rest-name').textContent = currentRestaurantName;
+
+        const datePicker = document.getElementById('trial_expiration_date_picker');
+        
+        // Restrict selection to today and future dates
+        const today = new Date();
+        const yyyy_today = today.getFullYear();
+        const mm_today = String(today.getMonth() + 1).padStart(2, '0');
+        const dd_today = String(today.getDate()).padStart(2, '0');
+        datePicker.min = `${yyyy_today}-${mm_today}-${dd_today}`;
+
+        if (currentExpDate) {
+            datePicker.value = currentExpDate;
+        } else {
+            const target = new Date();
+            target.setDate(target.getDate() + 14);
+            const yyyy = target.getFullYear();
+            const mm = String(target.getMonth() + 1).padStart(2, '0');
+            const dd = String(target.getDate()).padStart(2, '0');
+            datePicker.value = `${yyyy}-${mm}-${dd}`;
+        }
+
+        hideAllModalContents();
+        document.getElementById('modal-content-trial').style.display = 'block';
+    }
+
+    function handlePlanSubmit(event) {
+        event.preventDefault();
+        const plan = document.getElementById('modal_plan_selection').value;
+        const isFree = document.getElementById('modal_is_free_plan').checked;
+        
+        fetch(`/superadmin/restaurants/${currentRestaurantId}/change-plan`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subscription_plan: plan, is_free_plan: isFree })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to update plan");
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function handleTrialSubmit(event) {
+        event.preventDefault();
+        const expDate = document.getElementById('trial_expiration_date_picker').value;
+        
+        fetch(`/superadmin/restaurants/${currentRestaurantId}/extend-trial`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trial_expiration_date: expDate })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to extend trial");
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function showAdjustQuotasForm() {
+        document.getElementById('modal-title').textContent = "Adjust Quotas & Minutes";
+        document.getElementById('modal-quota-rest-name').textContent = currentRestaurantName;
+        
+        document.getElementById('modal_assigned_minutes').value = currentAssigned;
+        document.getElementById('modal_used_minutes').value = currentUsed;
+        
+        hideAllModalContents();
+        document.getElementById('modal-content-quota').style.display = 'block';
+    }
+
+    function handleQuotaSubmit(event) {
+        event.preventDefault();
+        const assigned = parseInt(document.getElementById('modal_assigned_minutes').value);
+        const used = parseFloat(document.getElementById('modal_used_minutes').value);
+        
+        fetch(`/superadmin/restaurants/${currentRestaurantId}/adjust-quota`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ assigned_minutes: assigned, used_minutes: used })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to adjust quotas");
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+</script>
+{% endblock %}
+{% endblock %}

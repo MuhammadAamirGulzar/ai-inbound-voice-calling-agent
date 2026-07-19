@@ -1,0 +1,289 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'dashboard' %}
+
+{% block title %}Dashboard - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header"
+    style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+    <div>
+        <h1 class="page-title">Dashboard Overview</h1>
+        <div style="font-size: 14px; color: var(--text-secondary); font-weight: 500; margin-top: 4px;">
+            <i class="fa-solid fa-clock mr-2"></i>Live: {{ range_display_label }}
+        </div>
+    </div>
+    <form method="get" action="/admin/dashboard" style="display: flex; align-items: center; gap: 8px;">
+        <label for="date_filter"
+            style="margin: 0; font-size: 13px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">Date
+            Range:</label>
+        <select name="date_filter" id="date_filter" onchange="this.form.submit()" class="form-control"
+            style="width: auto; padding: 6px 12px;">
+            <option value="today" {% if date_filter=='today' %}selected{% endif %}>Today</option>
+            <option value="yesterday" {% if date_filter=='yesterday' %}selected{% endif %}>Yesterday</option>
+            <option value="7days" {% if date_filter=='7days' %}selected{% endif %}>Last 7 Days</option>
+            <option value="30days" {% if date_filter=='30days' %}selected{% endif %}>Last 30 Days</option>
+            <option value="all" {% if date_filter=='all' %}selected{% endif %}>All Time</option>
+        </select>
+    </form>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Total Calls</span>
+            <i class="fa-solid fa-phone" style="color: var(--primary);"></i>
+        </div>
+        <div class="kpi-value">{{ total_calls }}</div>
+        <div class="kpi-trend up" style="color: var(--text-secondary);">
+            <i class="fa-solid fa-calendar mr-1"></i> For selected range
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Orders Booked</span>
+            <i class="fa-solid fa-circle-check" style="color: var(--success);"></i>
+        </div>
+        <div class="kpi-value">{{ total_orders }}</div>
+        <div class="kpi-trend up" style="color: var(--text-secondary);">
+            <i class="fa-solid fa-percentage mr-1"></i> {{ conversion_pct }}% conversion ratio
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Missed Calls</span>
+            <i class="fa-solid fa-phone-slash" style="color: var(--danger);"></i>
+        </div>
+        <div class="kpi-value">{{ missed_calls }}</div>
+        <div class="kpi-trend down" style="color: var(--text-secondary);">
+            <i class="fa-solid fa-circle-minus mr-1"></i> For selected range
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Avg. Call Duration</span>
+            <i class="fa-solid fa-hourglass-half" style="color: var(--info);"></i>
+        </div>
+        <div class="kpi-value">{{ avg_duration }}</div>
+        <div class="kpi-trend up" style="color: var(--text-secondary);">
+            <i class="fa-solid fa-arrows-left-right mr-1"></i> Stable
+        </div>
+    </div>
+</div>
+
+<!-- Main Dashboard Split Grid -->
+<div class="dashboard-grid">
+    <!-- Left Column: Volume Chart & Recent Calls -->
+    <div>
+        <!-- Call Volume SVG Chart -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Call Volume by Hour (Today)</div>
+                <div style="font-size: 12px; color: var(--text-secondary);">Rush-hour load tracking</div>
+            </div>
+            <div class="card-body">
+                <!-- Inline SVG Chart to render fast without external JS libraries -->
+                <div
+                    style="width: 100%; height: 200px; display: flex; align-items: flex-end; justify-content: space-between; padding-top: 10px;">
+                    <!-- Hourly bars (12 Hours) -->
+                    {% set hours = ['9 AM', '10 AM', '11 AM', '12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM', '6 PM',
+                    '7 PM', '8 PM'] %}
+                    {% for i in range(12) %}
+                    {% set val = hourly_counts[i] %}
+                    {% set pct = hourly_percentages[i] %}
+                    <div
+                        style="flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; margin: 0 4px;">
+                        <div
+                            style="font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">
+                            {{ val }}</div>
+                        {% if val > 0 %}
+                        <div
+                            style="width: 100%; height: {{ pct }}%; background-color: {% if val >= 5 %}var(--primary){% else %}var(--primary-light){% endif %}; border-radius: 4px 4px 0 0; transition: height 0.3s ease;">
+                        </div>
+                        {% else %}
+                        <div
+                            style="width: 100%; height: 0%; background-color: var(--border); border-radius: 4px 4px 0 0;">
+                        </div>
+                        {% endif %}
+                        <div
+                            style="font-size: 10px; color: var(--text-secondary); margin-top: 6px; white-space: nowrap;">
+                            {{ hours[i] }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Calls Table -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Recent Inbound Calls</div>
+                <a href="/admin/call-history" class="link">View All History</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Caller Number</th>
+                            <th>Time</th>
+                            <th>Duration</th>
+                            <th>Status</th>
+                            <th>Order Result</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for call in recent_calls %}
+                        <tr>
+                            <td class="font-semibold">{{ call.caller_number }}</td>
+                            <td>{{ call.time_str }}</td>
+                            <td>{{ call.duration_str }}</td>
+                            <td>
+                                {% if call.status.lower() == 'completed' %}
+                                <span class="badge badge-success">Completed</span>
+                                {% elif call.status.lower() == 'missed' %}
+                                <span class="badge badge-danger">Missed</span>
+                                {% elif call.status.lower() == 'in_progress' %}
+                                <span class="badge badge-warning">In Progress</span>
+                                {% else %}
+                                <span class="badge badge-danger">{{ call.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if call.order_result.exists == 'yes' %}
+                                <span style="color: var(--success);"><i class="fa-solid fa-circle-check"></i> {{
+                                    call.order_result.text }}</span>
+                                {% else %}
+                                <span style="color: var(--text-secondary);"><i class="fa-solid fa-circle-xmark"></i>
+                                    No</span>
+                                {% endif %}
+                            </td>
+                            <td><a href="/admin/call-detail?id={{ call.id }}" class="link"><i
+                                        class="fa-solid fa-eye"></i> View</a></td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 24px;">No
+                                calls logged yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Agent Status & Recent Orders -->
+    <div>
+        <!-- Agent Status Control Widget -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">AI Voice Agent Control</div>
+            </div>
+            <div class="card-body">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+                    <div>
+                        <div class="font-semibold" style="font-size: 15px;">Agent Status</div>
+                        <div style="font-size: 13px; color: var(--text-secondary);">Toggle AI call answering</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" class="agent-status-toggle" id="agentToggle" {% if is_agent_active
+                            %}checked{% endif %}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div
+                    style="background-color: var(--background); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 13px; color: var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info mr-2" style="color: var(--primary);"></i>
+                    If paused, calls will go straight to manual answer.
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Orders Panel -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Recent Orders</div>
+                <a href="/admin/orders" class="link">View All</a>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                <!-- List of recent 5 orders -->
+                <div style="display: flex; flex-direction: column;">
+                    {% for order in recent_orders %}
+                    <div
+                        style="padding: 16px 24px; border-bottom: {% if not loop.last %}1px solid var(--border){% else %}none{% endif %}; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div class="font-semibold" style="font-size: 14px;">Order #{{ order.id }}</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">{{ order.items_str }}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div class="font-bold" style="font-size: 14px; color: var(--text-primary);">{{
+                                order.total_price }}</div>
+                            <span
+                                class="badge {% if order.status.lower() == 'confirmed' %}badge-success{% elif order.status.lower() == 'pending' %}badge-warning{% else %}badge-danger{% endif %}"
+                                style="font-size: 10px; padding: 2px 8px;">
+                                {{ order.status.title() }}
+                            </span>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div style="padding: 24px; text-align: center; color: var(--text-secondary);">No orders booked yet.
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast notification element -->
+<div id="toast"
+    style="visibility: hidden; min-width: 250px; background-color: var(--success); color: #fff; text-align: center; border-radius: var(--radius-md); padding: 12px 16px; position: fixed; z-index: 1000; left: 50%; bottom: 30px; transform: translateX(-50%); opacity: 0; transition: opacity 0.3s, visibility 0.3s; font-size: 14px; font-weight: 500; box-shadow: var(--shadow-lg);">
+    Notification message
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function showToast(message, isError = false) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.style.backgroundColor = isError ? 'var(--danger)' : 'var(--success)';
+        toast.style.visibility = 'visible';
+        toast.style.opacity = '1';
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => { toast.style.visibility = 'hidden'; }, 300);
+        }, 3000);
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        const agentToggle = document.getElementById('agentToggle');
+        if (agentToggle) {
+            agentToggle.addEventListener('change', async function () {
+                const isActive = this.checked;
+                try {
+                    const res = await fetch('/admin/settings/agent/toggle', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ is_active: isActive })
+                    });
+
+                    if (!res.ok) {
+                        throw new Error("Failed to toggle agent status");
+                    }
+                    showToast(isActive ? "Agent activated. Calls will be handled by AI." : "Agent paused. Calls will be dropped.");
+                } catch (err) {
+                    console.error(err);
+                    alert("Error: Could not update agent status.");
+                    this.checked = !isActive; // revert
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

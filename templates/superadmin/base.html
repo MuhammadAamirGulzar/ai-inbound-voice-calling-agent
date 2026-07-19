@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Super Admin - OrderSaathi{% endblock %}</title>
+    <!-- Inter Font -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="/static/admin/style.css">
+    {% block extra_css %}{% endblock %}
+    <style>
+        /* Slightly modify the topbar for super admin to differentiate */
+        .topbar-left {
+            border-left: 4px solid var(--primary);
+            padding-left: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <a href="/superadmin/dashboard" class="sidebar-brand">
+                    <i class="fa-solid fa-microphone-lines mr-2"></i>OrderSaathi <span style="font-size: 10px; background-color: var(--primary-light); color: var(--primary); padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">ADMIN</span>
+                </a>
+            </div>
+            <nav class="sidebar-nav">
+                <ul class="nav-list">
+                    <li class="nav-item">
+                        <a href="/superadmin/dashboard" class="nav-link {% if active_page == 'super-dashboard' %}active{% endif %}">
+                            <i class="fa-solid fa-chart-pie nav-icon"></i>Overview
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/superadmin/restaurants" class="nav-link {% if active_page == 'super-restaurants' or active_page == 'super-restaurant-detail' or active_page == 'super-create-restaurant' %}active{% endif %}">
+                            <i class="fa-solid fa-store nav-icon"></i>Restaurants
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/superadmin/billing" class="nav-link {% if active_page == 'super-billing' %}active{% endif %}">
+                            <i class="fa-solid fa-file-invoice-dollar nav-icon"></i>Subscriptions & Billing
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/superadmin/plan-requests" class="nav-link {% if active_page == 'super-plan-requests' %}active{% endif %}" style="position: relative;">
+                            <i class="fa-solid fa-exchange-alt nav-icon"></i>Plan Requests
+                            <span id="plan-req-badge" style="display:none; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background-color: var(--warning); color: white; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; font-weight: 700; align-items: center; justify-content: center;"></span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/superadmin/analytics" class="nav-link {% if active_page == 'super-analytics' %}active{% endif %}">
+                            <i class="fa-solid fa-chart-network nav-icon"></i>Platform Analytics
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/superadmin/accounts" class="nav-link {% if active_page == 'super-accounts' %}active{% endif %}">
+                            <i class="fa-solid fa-users-cog nav-icon"></i>Admin Accounts
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/superadmin/settings" class="nav-link {% if active_page == 'super-settings' %}active{% endif %}">
+                            <i class="fa-solid fa-cogs nav-icon"></i>System Settings
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+            <div class="sidebar-footer" style="padding: 20px; border-top: 1px solid var(--border);">
+                <a href="/logout" class="nav-link" style="color: var(--danger);">
+                    <i class="fa-solid fa-sign-out-alt nav-icon"></i>Log Out
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Wrapper -->
+        <div class="main-wrapper">
+            <!-- Top bar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <div class="restaurant-name" style="color: var(--text-primary); font-weight: 600;">
+                        Super Admin Portal
+                    </div>
+                </div>
+                <div class="topbar-right">
+                    <!-- System Health Indicator -->
+                    <div id="system-health-badge" class="agent-status-badge live" style="background-color: var(--success-bg); color: var(--success);">
+                        <span id="system-health-dot" class="status-dot"></span>
+                        <span id="system-health-text" class="status-text">All Systems Operational</span>
+                    </div>
+
+                    <!-- Notification Bell -->
+                    <div class="notification-dropdown-container" style="position: relative;">
+                        <button id="sa-bell-btn" style="background: none; border: none; cursor: pointer; color: var(--text-secondary); font-size: 18px; position: relative; padding: 8px; display: flex; align-items: center; justify-content: center; outline: none; margin-right: 8px;">
+                            <i class="fa-solid fa-bell"></i>
+                            <span id="sa-notif-badge" style="display: none; position: absolute; top: 0px; right: 0px; background-color: var(--danger); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 9px; font-weight: 700; align-items: center; justify-content: center;">0</span>
+                        </button>
+                        <div id="sa-notif-dropdown" style="display: none; position: absolute; top: 100%; right: 0; margin-top: 8px; width: 360px; background-color: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); z-index: 1000; max-height: 480px; overflow-y: auto;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border);">
+                                <span style="font-size: 14px; font-weight: 600; color: var(--text-primary);">Notifications</span>
+                                <a href="/superadmin/plan-requests" style="font-size: 12px; color: var(--primary); text-decoration: none; font-weight: 500;">View All Requests</a>
+                            </div>
+                            <div id="sa-notif-list" style="padding: 8px 0;">
+                                <div style="padding: 20px; text-align: center; font-size: 13px; color: var(--text-secondary);">No new notifications.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="user-profile" style="display: flex; align-items: center; gap: 8px;">
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background-color: #374151; color: white; display: flex; align-items: center; justify-content: center; font-weight: 600; text-transform: uppercase;">
+                            {{ current_user.name[:2] if current_user else 'SA' }}
+                        </div>
+                        <span style="font-size: 14px; font-weight: 500; color: var(--text-primary);">{{ current_user.name if current_user else 'Super Admin' }}</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Main Content Area -->
+            <main class="main-content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+
+    {% block extra_js %}{% endblock %}
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // ── System Health ────────────────────────────────
+            fetch('/superadmin/api/health')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.suspended_count && data.suspended_count > 0) {
+                        const badge = document.getElementById('system-health-badge');
+                        const text  = document.getElementById('system-health-text');
+                        const dot   = document.getElementById('system-health-dot');
+                        badge.style.backgroundColor = 'var(--danger-bg)';
+                        badge.style.color = 'var(--danger)';
+                        text.textContent = data.suspended_count + ' Account(s) Suspended';
+                        dot.style.backgroundColor = 'var(--danger)';
+                        dot.style.animation = 'none';
+                        dot.style.boxShadow = 'none';
+                    }
+                })
+                .catch(e => console.error("Health fetch error:", e));
+
+            // ── Notifications Bell ───────────────────────────
+            const bellBtn    = document.getElementById('sa-bell-btn');
+            const dropdown   = document.getElementById('sa-notif-dropdown');
+            const listEl     = document.getElementById('sa-notif-list');
+            const badge      = document.getElementById('sa-notif-badge');
+            const planBadge  = document.getElementById('plan-req-badge');
+
+            function relTime(isoStr) {
+                if (!isoStr) return '';
+                const diff = (Date.now() - new Date(isoStr + 'Z').getTime()) / 1000;
+                if (diff < 60)    return 'Just now';
+                if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+                if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+                return Math.floor(diff / 86400) + 'd ago';
+            }
+
+            function renderNotifications(requests) {
+                if (!requests || requests.length === 0) {
+                    listEl.innerHTML = '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text-secondary);">No new plan change requests.</div>';
+                    return;
+                }
+                listEl.innerHTML = requests.map(r => `
+                    <a href="/superadmin/plan-requests" style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);text-decoration:none;transition:background 0.15s;" onmouseover="this.style.background='var(--background)'" onmouseout="this.style.background=''">
+                        <div style="width:34px;height:34px;border-radius:50%;background:var(--warning-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <i class="fa-solid fa-exchange-alt" style="color:var(--warning);font-size:14px;"></i>
+                        </div>
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:2px;">${r.restaurant_name}</div>
+                            <div style="font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Requesting: <strong>${r.current_plan.replace('_',' ')} → ${r.requested_plan.replace('_',' ')}</strong></div>
+                            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${relTime(r.created_at)}</div>
+                        </div>
+                        <span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:var(--warning);margin-top:4px;"></span>
+                    </a>
+                `).join('');
+            }
+
+            function loadNotifs() {
+                fetch('/superadmin/api/notifications')
+                    .then(r => r.json())
+                    .then(data => {
+                        const count = data.pending_count || 0;
+                        // Update bell badge
+                        if (count > 0) {
+                            badge.textContent = count > 9 ? '9+' : count;
+                            badge.style.display = 'flex';
+                        } else {
+                            badge.style.display = 'none';
+                        }
+                        // Update sidebar badge
+                        if (planBadge) {
+                            if (count > 0) {
+                                planBadge.textContent = count;
+                                planBadge.style.display = 'flex';
+                            } else {
+                                planBadge.style.display = 'none';
+                            }
+                        }
+                        renderNotifications(data.pending_requests);
+                    })
+                    .catch(e => console.error("Notif fetch error:", e));
+            }
+
+            bellBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const visible = dropdown.style.display === 'block';
+                dropdown.style.display = visible ? 'none' : 'block';
+                if (!visible) loadNotifs();
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!dropdown.contains(e.target) && e.target !== bellBtn && !bellBtn.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+
+            // Initial load & poll every 30s
+            loadNotifs();
+            setInterval(loadNotifs, 30000);
+        });
+    </script>
+</body>
+</html>

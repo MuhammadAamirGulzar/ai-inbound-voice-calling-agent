@@ -1,0 +1,237 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-restaurants' %}
+
+{% block title %}Onboard New Restaurant - Super Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/superadmin/restaurants" class="link" style="font-size: 13px; display: inline-flex; align-items: center; margin-bottom: 12px;">
+            <i class="fa-solid fa-arrow-left mr-2"></i>Back to Restaurants
+        </a>
+        <h1 class="page-title">Onboard New Restaurant</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Register a new restaurant tenant and provision their initial telephony details.
+        </div>
+    </div>
+</div>
+
+<div class="detail-layout" id="form-container" style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+    <!-- Form Area -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">Restaurant Information & Provisioning</div>
+        </div>
+        <div class="card-body">
+            <form id="onboard-form" onsubmit="handleOnboard(event)">
+                <div id="error-message" style="color: var(--danger); background-color: rgba(244, 63, 94, 0.1); border: 1px solid var(--danger); padding: 10px; border-radius: 8px; margin-bottom: 15px; display: none; font-size: 14px;"></div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="rest_name">Restaurant Name</label>
+                        <input class="form-control" type="text" id="rest_name" placeholder="e.g. Savour Foods" required>
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="plan_selection">Subscription Plan</label>
+                        <select class="form-control" id="plan_selection" required>
+                            <option value="monthly">Monthly</option>
+                            <option value="six_monthly">6 Monthly</option>
+                            <option value="annually">Annually</option>
+                        </select>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+                            <input type="checkbox" id="is_free_plan" style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);">
+                            <label for="is_free_plan" style="font-size: 13px; color: var(--text-secondary); cursor: pointer; margin-bottom: 0; user-select: none;">Enable Free Trial (2 Weeks)</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="form-label" for="description">Description</label>
+                    <input class="form-control" type="text" id="description" placeholder="e.g. Premium nihari and local cuisines">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="admin_name">Admin Name</label>
+                        <input class="form-control" type="text" id="admin_name" placeholder="e.g. Ahmad Khan" required>
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="email">Admin Email Address</label>
+                        <input class="form-control" type="email" id="email" placeholder="e.g. contact@restaurant.com" required>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="phone">Contact Mobile Number</label>
+                        <input class="form-control" type="text" id="phone" placeholder="e.g. 03348756446" required>
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="order_phone_number">Order Phone Number</label>
+                        <input class="form-control" type="text" id="order_phone_number" value="{{ default_order_phone }}" required>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                    <a href="/superadmin/restaurants" class="btn btn-secondary" style="height: 40px; display: inline-flex; align-items: center; justify-content: center;">Cancel</a>
+                    <button type="submit" class="btn btn-primary" style="height: 40px;" id="submit-btn">Onboard & Provision</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Quick Info -->
+    <div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Setup Guidance</div>
+            </div>
+            <div class="card-body" style="font-size: 13px; line-height: 1.6; color: var(--text-secondary);">
+                <p style="margin-bottom: 12px;">Onboarding a restaurant executes the following backend automation:</p>
+                <ul style="padding-left: 20px; list-style-type: disc; margin-bottom: 16px;">
+                    <li style="margin-bottom: 8px;">Creates a new database record under the <strong>Restaurant</strong> model.</li>
+                    <li style="margin-bottom: 8px;">Generates a unique login username (e.g. "akhan") based on the admin's name.</li>
+                    <li style="margin-bottom: 8px;">Generates a randomized secure temporary password.</li>
+                    <li style="margin-bottom: 8px;">Forces a password change on the administrator's first login.</li>
+                </ul>
+                <div style="background-color: var(--primary-light); padding: 12px; border-radius: 8px; color: var(--primary); font-weight: 500;">
+                    <i class="fa-solid fa-lightbulb mr-2"></i> The credentials will be displayed only once on the next screen. Please copy them securely.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation Screen -->
+<div class="card" id="confirmation-container" style="display: none; max-width: 600px; margin: 40px auto; padding: 40px 24px;">
+    <div style="width: 72px; height: 72px; border-radius: 50%; background-color: var(--success-bg); color: var(--success); display: flex; align-items: center; justify-content: center; margin: 0 auto 24px auto; font-size: 32px;">
+        <i class="fa-solid fa-circle-check"></i>
+    </div>
+    <h2 style="font-size: 24px; color: var(--text-primary); margin-bottom: 12px; text-align: center;">Restaurant Onboarded Successfully</h2>
+    <p style="font-size: 15px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px; text-align: center;" id="confirmation-text">
+        Restaurant created. Initial login credentials are generated below.
+    </p>
+    
+    <div style="background-color: var(--background); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 32px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px; margin-bottom: 16px;">
+            <div>
+                <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">RESTAURANT NAME</span>
+                <div class="font-semibold" style="margin-top: 4px; color: var(--text-primary); font-size: 14px;" id="conf-name">--</div>
+            </div>
+            <div>
+                <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">PLAN TIER</span>
+                <div class="font-semibold" style="margin-top: 4px; color: var(--text-primary); font-size: 14px; text-transform: capitalize;" id="conf-plan">--</div>
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px; margin-bottom: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
+            <div>
+                <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">TEMP USERNAME</span>
+                <div class="font-semibold" style="margin-top: 4px; color: var(--text-primary); font-size: 14px; font-family: monospace; background: rgba(255, 255, 255, 0.05); padding: 4px 8px; border-radius: 4px; display: inline-block;" id="conf-username">--</div>
+            </div>
+            <div>
+                <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">TEMP PASSWORD</span>
+                <div class="font-semibold" style="margin-top: 4px; color: var(--primary); font-size: 14px; font-family: monospace; background: rgba(255, 255, 255, 0.05); padding: 4px 8px; border-radius: 4px; display: inline-block;" id="conf-password">--</div>
+            </div>
+        </div>
+        <div style="font-size: 13px; border-top: 1px solid var(--border); padding-top: 16px;">
+            <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">ORDER INBOUND NUMBER</span>
+            <div class="font-semibold" style="margin-top: 4px; color: var(--text-primary); font-size: 14px;" id="conf-number">--</div>
+        </div>
+    </div>
+
+    <div style="display: flex; justify-content: center; gap: 12px;">
+        <a href="/superadmin/restaurants" class="btn btn-secondary">Go to Restaurants</a>
+        <button onclick="resetForm()" class="btn btn-primary">Onboard Another</button>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    function handleOnboard(event) {
+        event.preventDefault();
+        
+        const errorDiv = document.getElementById('error-message');
+        errorDiv.style.display = 'none';
+        errorDiv.textContent = '';
+        
+        const name = document.getElementById('rest_name').value;
+        const subscription_plan = document.getElementById('plan_selection').value;
+        const description = document.getElementById('description').value;
+        const admin_name = document.getElementById('admin_name').value;
+        const email = document.getElementById('email').value;
+        const mobile_number = document.getElementById('phone').value;
+        const order_phone_number = document.getElementById('order_phone_number').value;
+        const is_free_plan = document.getElementById('is_free_plan').checked;
+
+        const submitBtn = document.getElementById('submit-btn');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Onboarding...';
+
+        fetch("/superadmin/create-restaurant", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                name,
+                subscription_plan,
+                description,
+                admin_name,
+                email,
+                mobile_number,
+                order_phone_number,
+                is_free_plan
+            })
+        })
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.detail || data.error || 'Failed to onboard restaurant.');
+            }
+            return data;
+        })
+        .then(data => {
+            // Populate values on confirmation screen
+            document.getElementById('conf-name').textContent = data.restaurant_name;
+            document.getElementById('conf-plan').textContent = data.subscription_plan;
+            document.getElementById('conf-username').textContent = data.username;
+            document.getElementById('conf-password').textContent = data.password;
+            document.getElementById('conf-number').textContent = data.order_phone_number;
+            
+            // Swap views
+            document.getElementById('form-container').style.display = 'none';
+            document.getElementById('confirmation-container').style.display = 'block';
+        })
+        .catch(error => {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Onboard & Provision';
+            errorDiv.textContent = error.message;
+            errorDiv.style.display = 'block';
+        });
+    }
+
+    function resetForm() {
+        document.getElementById('onboard-form').reset();
+        document.getElementById('form-container').style.display = 'grid';
+        document.getElementById('confirmation-container').style.display = 'none';
+        
+        const submitBtn = document.getElementById('submit-btn');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Onboard & Provision';
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const freePlanCheckbox = document.getElementById("is_free_plan");
+        const planSelection = document.getElementById("plan_selection");
+        
+        if (freePlanCheckbox && planSelection) {
+            function togglePlanSelection() {
+                planSelection.disabled = freePlanCheckbox.checked;
+            }
+            freePlanCheckbox.addEventListener("change", togglePlanSelection);
+            togglePlanSelection(); // initial state
+        }
+    });
+</script>
+{% endblock %}
+{% endblock %}

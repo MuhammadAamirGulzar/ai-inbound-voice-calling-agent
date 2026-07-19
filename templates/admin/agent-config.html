@@ -1,0 +1,301 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'agent-config' %}
+
+{% block title %}Agent Configuration - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">AI Voice Agent Configuration</h1>
+    <div style="font-size: 14px; color: var(--text-secondary);">
+        Configure your AI voice agent's identity, greeting, business details, and behaviour policies.
+        Changes are saved to both the database and the RAG knowledge base immediately.
+    </div>
+</div>
+
+<div id="toast"
+    style="display: none; position: fixed; bottom: 20px; right: 20px; background-color: var(--success); color: white; padding: 12px 24px; border-radius: var(--radius-md); font-weight: 500; box-shadow: var(--shadow-lg); z-index: 1000; transition: opacity 0.3s;">
+</div>
+
+<form id="agent-config-form">
+
+    <!-- ── Section 1: Voice Engine ──────────────────────────────────── -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-body" style="padding: 28px 32px;">
+            <h3 class="font-semibold"
+                style="font-size: 15px; margin-bottom: 18px; color: var(--text-primary); display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-microphone-lines" style="color: var(--primary);"></i> Voice Engine
+            </h3>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="agent-voice">Select Agent Voice Engine</label>
+                {% if elevenlabs_api_present %}
+                <select class="form-control" id="agent-voice" style="padding: 10px 14px; font-weight: 500;">
+                    <option value="urdu-female" {% if
+                        current_user.restaurant.agent_configuration.voice_engine=='urdu-female' %}selected{% endif %}>
+                        Roman Urdu - Zara (Female, High Quality)</option>
+                    <option value="urdu-male" {% if
+                        current_user.restaurant.agent_configuration.voice_engine=='urdu-male' %}selected{% endif %}>
+                        Roman Urdu - Hamza (Male, Corporate)</option>
+                    <option value="english-us" {% if
+                        current_user.restaurant.agent_configuration.voice_engine=='english-us' %}selected{% endif %}>US
+                        English - Rachel (Standard TTS)</option>
+                    <option value="local-piper" {% if
+                        current_user.restaurant.agent_configuration.voice_engine=='local-piper' %}selected{% endif %}>
+                        Local Piper Engine (Low Latency Offline)</option>
+                </select>
+                {% else %}
+                <div class="form-control" title="ElevenLabs API Key is missing."
+                    style="background-color: var(--background); color: var(--text-secondary); font-weight: 500; cursor: not-allowed; border: 1px dashed var(--border); display:flex; align-items:center;">
+                    Local Piper Engine (Low Latency Offline) [ElevenLabs API Key missing]
+                </div>
+                <select class="form-control" id="agent-voice" style="display: none;">
+                    <option value="local-piper" selected>Local Piper Engine (Low Latency Offline)</option>
+                </select>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Section 2: Identity & Persona ───────────────────────────── -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-body" style="padding: 28px 32px;">
+            <h3 class="font-semibold"
+                style="font-size: 15px; margin-bottom: 18px; color: var(--text-primary); display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-robot" style="color: var(--primary);"></i> Agent Identity &amp; Persona
+                <span style="font-size:12px; font-weight:400; color:var(--text-secondary); margin-left:auto;">Values
+                    read from RAG knowledge base</span>
+            </h3>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label class="form-label" for="field-business-name">Business Name</label>
+                    <input class="form-control" type="text" id="field-business-name"
+                        value="{{ rag_business_name | default('') }}" placeholder="e.g. Khyber Shinwari Restaurant">
+                    <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">Defaults to PostgreSQL
+                        restaurant name if not set in RAG.</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="field-agent-name">Agent Name</label>
+                    <input class="form-control" type="text" id="field-agent-name"
+                        value="{{ rag_persona.get('agent_name', '') }}" placeholder="e.g. Zara">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="field-tone">Tone / Style</label>
+                    <input class="form-control" type="text" id="field-tone" value="{{ rag_persona.get('tone', '') }}"
+                        placeholder="e.g. friendly and helpful">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="field-language">Language</label>
+                    <input class="form-control" type="text" id="field-language"
+                        value="{{ rag_persona.get('language', '') }}" placeholder="e.g. Roman Urdu / Urdu-English mix">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="field-greeting-script">Greeting Script (spoken at call start)</label>
+                <textarea class="form-control" id="field-greeting-script" rows="2"
+                    style="resize:vertical;">{{ default_greeting }}</textarea>
+                <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">The exact phrase the agent
+                    says when the call connects.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="field-greeting-style">Greeting Style / Notes</label>
+                <input class="form-control" type="text" id="field-greeting-style"
+                    value="{{ rag_persona.get('greeting_style', '') }}" placeholder="e.g. warm, concise, formal">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="field-closing-script">Closing Script</label>
+                <textarea class="form-control" id="field-closing-script" rows="2"
+                    style="resize:vertical;">{{ rag_persona.get('closing_script', '') }}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label" for="field-persona-notes">Persona Notes</label>
+                <textarea class="form-control" id="field-persona-notes" rows="2"
+                    style="resize:vertical;">{{ rag_persona.get('notes', '') }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Section 3: Business Details ─────────────────────────────── -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-body" style="padding: 28px 32px;">
+            <h3 class="font-semibold"
+                style="font-size: 15px; margin-bottom: 18px; color: var(--text-primary); display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-store" style="color: var(--primary);"></i> Business Details
+            </h3>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label class="form-label" for="field-address">Address</label>
+                    <input class="form-control" type="text" id="field-address"
+                        value="{{ rag_details.get('address', '') }}" placeholder="e.g. 12 Jinnah Avenue, Islamabad">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="field-phone">Phone</label>
+                    <input class="form-control" type="text" id="field-phone" value="{{ rag_details.get('phone', '') }}"
+                        placeholder="e.g. 051-1234567">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="field-hours">Operating Hours</label>
+                    <input class="form-control" type="text" id="field-hours" value="{{ rag_details.get('hours', '') }}"
+                        placeholder="e.g. 12:00 PM – 2:00 AM daily">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="field-avg-prep-time">Avg. Preparation Time</label>
+                    <input class="form-control" type="text" id="field-avg-prep-time"
+                        value="{{ rag_details.get('avg_preparation_time', '') }}" placeholder="e.g. 25–35 minutes">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="field-delivery-info">Delivery Information</label>
+                <input class="form-control" type="text" id="field-delivery-info"
+                    value="{{ rag_details.get('delivery_info', '') }}"
+                    placeholder="e.g. Free delivery within 5 km, PKR 100 beyond">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label" for="field-delivery-areas">Delivery Areas <span
+                        style="font-weight:400; color:var(--text-secondary);">(comma-separated)</span></label>
+                <input class="form-control" type="text" id="field-delivery-areas"
+                    value="{{ rag_details.get('delivery_areas', []) | join(', ') }}"
+                    placeholder="e.g. F-7, F-8, G-9, Bahria Town">
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Section 4: Policies ──────────────────────────────────────── -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-body" style="padding: 28px 32px;">
+            <h3 class="font-semibold"
+                style="font-size: 15px; margin-bottom: 18px; color: var(--text-primary); display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-shield-halved" style="color: var(--primary);"></i> Agent Policies
+            </h3>
+
+            <div class="form-group">
+                <label class="form-label" for="field-upsell">Upsell Strategy</label>
+                <textarea class="form-control" id="field-upsell" rows="2" style="resize:vertical;"
+                    placeholder="e.g. Suggest a drink or dessert with every food order">{{ rag_policies.get('upsell_strategy', '') }}</textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="field-out-of-stock">Out-of-Stock Protocol</label>
+                <textarea class="form-control" id="field-out-of-stock" rows="2" style="resize:vertical;"
+                    placeholder="e.g. Apologise, offer nearest alternative, or skip the item">{{ rag_policies.get('out_of_stock_protocol', '') }}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label" for="field-escalation">Escalation Protocol</label>
+                <textarea class="form-control" id="field-escalation" rows="2" style="resize:vertical;"
+                    placeholder="e.g. If customer is unhappy, offer to connect to the manager">{{ rag_policies.get('escalation_protocol', '') }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Section 5: System Prompt & Greeting ──────────────────────── -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-body" style="padding: 28px 32px;">
+            <h3 class="font-semibold"
+                style="font-size: 15px; margin-bottom: 4px; color: var(--text-primary); display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-terminal" style="color: var(--primary);"></i> System Prompt &amp; Greeting
+                Override
+            </h3>
+            <div style="font-size:12px; color:var(--text-secondary); margin-bottom:18px;">
+                These are the raw values fed to the live call pipeline. They are pre-filled from the persona section
+                above.
+                Edit here for fine-grained control.
+            </div>
+
+            <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label" for="agent-instruction">LLM Behaviour Guidelines (System Prompt
+                    Injection)</label>
+                <textarea class="form-control" id="agent-instruction" rows="10"
+                    style="resize:vertical;">{{ default_system_prompt }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Save Button ──────────────────────────────────────────────── -->
+    <div style="display: flex; justify-content: flex-end; margin-bottom: 32px;">
+        <button type="submit" class="btn btn-primary" id="save-btn" style="padding: 12px 32px; font-size: 15px;">
+            <i class="fa-solid fa-circle-check mr-2"></i>Save All Configuration
+        </button>
+    </div>
+</form>
+
+<script>
+    function showToast(message, isError = false) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.style.backgroundColor = isError ? 'var(--danger)' : 'var(--success)';
+        toast.style.display = 'block';
+        toast.style.opacity = '1';
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => { toast.style.display = 'none'; }, 300);
+        }, 3500);
+    }
+
+    document.getElementById('agent-config-form').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const btn = document.getElementById('save-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Saving...';
+
+        // Collect delivery areas as a list
+        const deliveryAreasRaw = document.getElementById('field-delivery-areas').value;
+        const deliveryAreas = deliveryAreasRaw
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+        const payload = {
+            // PostgreSQL fields
+            voice_engine: document.getElementById('agent-voice').value,
+
+            system_prompt: document.getElementById('agent-instruction').value,
+
+            // RAG profile fields
+            business_name: document.getElementById('field-business-name').value.trim(),
+            persona: {
+                agent_name: document.getElementById('field-agent-name').value.trim(),
+                tone: document.getElementById('field-tone').value.trim(),
+                language: document.getElementById('field-language').value.trim(),
+                greeting_script: document.getElementById('field-greeting-script').value.trim(),
+                greeting_style: document.getElementById('field-greeting-style').value.trim(),
+                closing_script: document.getElementById('field-closing-script').value.trim(),
+                notes: document.getElementById('field-persona-notes').value.trim(),
+            },
+            details: {
+                address: document.getElementById('field-address').value.trim(),
+                phone: document.getElementById('field-phone').value.trim(),
+                hours: document.getElementById('field-hours').value.trim(),
+                avg_preparation_time: document.getElementById('field-avg-prep-time').value.trim(),
+                delivery_info: document.getElementById('field-delivery-info').value.trim(),
+                delivery_areas: deliveryAreas,
+            },
+            policies: {
+                upsell_strategy: document.getElementById('field-upsell').value.trim(),
+                out_of_stock_protocol: document.getElementById('field-out-of-stock').value.trim(),
+                escalation_protocol: document.getElementById('field-escalation').value.trim(),
+            },
+        };
+
+        try {
+            const res = await fetch('/admin/agent-config/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                showToast('Configuration saved and synced to knowledge base!');
+            } else {
+                showToast(data.error || 'Failed to save configuration.', true);
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('A network error occurred.', true);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-circle-check mr-2"></i>Save All Configuration';
+        }
+    });
+</script>
+{% endblock %}

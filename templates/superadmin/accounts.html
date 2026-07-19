@@ -1,0 +1,488 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-accounts' %}
+
+{% block title %}Admin Accounts - Super Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Admin Accounts</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Manage platform admin accounts, credentials, and access permissions across all restaurant tenants.
+        </div>
+    </div>
+    <div style="display: flex; gap: 12px;">
+        <div class="search-box">
+            <i class="fa-solid fa-search search-icon"></i>
+            <input type="text" id="account-search" class="form-control" placeholder="Search by name, email, or restaurant..." style="padding-left: 36px; border-radius: 20px; width: 260px;">
+        </div>
+        <button onclick="openCreateModal()" class="btn btn-primary"><i class="fa-solid fa-user-plus mr-2"></i>Create New Admin</button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>User Details</th>
+                    <th>Role</th>
+                    <th>Restaurant Tenant</th>
+                    <th>Status</th>
+                    <th>Created Date</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="accounts-table-body">
+                {% if users %}
+                    {% for u in users %}
+                    {% set is_self = (u.id == current_user.id) %}
+                    {% set is_last_admin = (u.role == 'admin' and u.restaurant_id and admin_counts.get(u.restaurant_id, 0) <= 1) %}
+                    {% set cannot_delete = is_self or is_last_admin %}
+                    <tr data-user-id="{{ u.id }}">
+                        <td>
+                            <div class="font-semibold text-primary" style="font-weight: 600; color: var(--primary);">{{ u.name }}</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">{{ u.email }} | {{ u.phone_number or 'No Phone' }}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary); font-family: monospace; margin-top: 2px;">Username: {{ u.username }}</div>
+                        </td>
+                        <td>
+                            {% if u.role == 'super_admin' %}
+                            <span class="badge" style="background-color: #374151; color: white;">Super Admin</span>
+                            {% else %}
+                            <span class="badge" style="background-color: var(--primary-light); color: var(--primary);">Restaurant Admin</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if u.restaurant %}
+                            <div class="font-semibold" style="font-weight: 500;">{{ u.restaurant.name }}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary);">ID: ORG-00{{ u.restaurant.id }}</div>
+                            {% else %}
+                            <div class="font-semibold" style="color: var(--text-secondary); font-style: italic;">Platform Wide (No Tenant)</div>
+                            <div style="font-size: 11px; color: var(--text-secondary);">ID: SYSTEM</div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if u.restaurant and u.restaurant.is_suspended %}
+                            <span class="badge badge-danger" style="background-color: var(--danger-bg); color: var(--danger);">Suspended (Tenant)</span>
+                            {% else %}
+                            <span class="badge badge-success" style="background-color: var(--success-bg); color: var(--success);">Active</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div style="font-size: 13px;">
+                                {{ u.created_at.strftime('%b %d, %Y') if u.created_at else 'N/A' }}
+                            </div>
+                        </td>
+                        <td class="text-right">
+                            <div style="display: inline-flex; gap: 8px;">
+                                <button onclick="openEditModal('{{ u.id }}', '{{ u.name | escape }}', '{{ u.email | escape }}', '{{ u.phone_number or '' }}', '{{ 'Super Admin' if u.role == 'super_admin' else 'Restaurant Admin' }}', '{{ u.restaurant_id or '' }}')" class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" title="Edit Admin"><i class="fa-solid fa-pen"></i></button>
+                                
+                                {% if cannot_delete %}
+                                <button class="btn btn-danger" style="padding: 6px 10px; font-size: 12px; background-color: var(--danger-bg); color: var(--danger); border-color: transparent; opacity: 0.35; cursor: not-allowed;" title="{% if is_self %}You cannot delete your own account{% else %}Cannot delete the last admin account for this restaurant{% endif %}" disabled><i class="fa-solid fa-trash-can"></i></button>
+                                {% else %}
+                                <button onclick="openDeleteModal('{{ u.id }}', '{{ u.name | escape }}')" class="btn btn-danger" style="padding: 6px 10px; font-size: 12px; background-color: var(--danger-bg); color: var(--danger); border-color: transparent;" title="Delete Admin"><i class="fa-solid fa-trash-can"></i></button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 30px;">
+                            No accounts found.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Create / Edit Admin Modal -->
+<div id="admin-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000;">
+    <div class="card" style="width: 100%; max-width: 480px; margin: 0 16px; background-color: white;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding: 16px 20px;">
+            <div class="card-title" id="modal-title" style="font-weight: 600; font-size: 16px; margin: 0;">Create New Admin Account</div>
+            <button onclick="closeModal()" style="border: 0; background: none; font-size: 20px; cursor: pointer; color: var(--text-secondary);">&times;</button>
+        </div>
+        <div class="card-body" style="padding: 20px;">
+            <form id="admin-form" onsubmit="saveAdmin(event)">
+                <div id="form-fields-container">
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label class="form-label" for="admin-name" style="display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500;">Full Name</label>
+                        <input class="form-control" type="text" id="admin-name" placeholder="e.g. Bilal Ahmed" required style="width: 100%; box-sizing: border-box;">
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label class="form-label" for="admin-email" style="display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500;">Email Address</label>
+                        <input class="form-control" type="email" id="admin-email" placeholder="e.g. bilal@shinwari.pk" required style="width: 100%; box-sizing: border-box;">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label class="form-label" for="admin-phone" style="display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500;">Phone Number</label>
+                        <input class="form-control" type="text" id="admin-phone" placeholder="e.g. +92 300 1234567" required style="width: 100%; box-sizing: border-box;">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label class="form-label" for="admin-role" style="display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500;">Account Role</label>
+                        <select class="form-control" id="admin-role" onchange="toggleTenantSelect()" required style="width: 100%; box-sizing: border-box;">
+                            <option value="Restaurant Admin">Restaurant Admin (Tenant Scoped)</option>
+                            <option value="Super Admin">Super Admin (Platform-Wide)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="tenant-select-group" style="margin-bottom: 16px;">
+                        <label class="form-label" for="admin-tenant" style="display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500;">Assign Restaurant Tenant</label>
+                        <select class="form-control" id="admin-tenant" style="width: 100%; box-sizing: border-box;">
+                            <option value="">-- Select Restaurant --</option>
+                            {% for r in restaurants %}
+                            <option value="{{ r.id }}">{{ r.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Status alert message inside modal -->
+                <div id="modal-status-message" style="display: none; margin-top: 16px; padding: 10px; border-radius: 6px; font-size: 13px; text-align: center; font-weight: 500;"></div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px;">
+                    <button type="button" id="cancel-account-btn" onclick="closeModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                    <button type="submit" id="save-account-btn" class="btn btn-primary" style="height: 38px;">Save Account</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Custom Deletion Confirmation Modal -->
+<div id="delete-confirm-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1001;">
+    <div class="card" style="width: 100%; max-width: 400px; margin: 0 16px; background-color: white;">
+        <div class="card-header" style="border-bottom: 1px solid var(--border); padding: 16px 20px;">
+            <div class="card-title" style="font-weight: 600; font-size: 16px; margin: 0; color: var(--danger);">Confirm Deletion</div>
+        </div>
+        <div class="card-body" style="padding: 20px;">
+            <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 20px;" id="delete-modal-text">
+                Are you sure you want to permanently delete the admin account for <strong id="delete-admin-name"></strong>?
+            </p>
+            
+            <div id="delete-error-message" style="display: none; color: var(--danger); background-color: var(--danger-bg); border: 1px solid rgba(239, 68, 68, 0.2); padding: 10px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; text-align: center; font-weight: 500;"></div>
+            <div id="delete-success-message" style="display: none; color: var(--success); background-color: var(--success-bg); border: 1px solid rgba(16, 185, 129, 0.2); padding: 10px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; text-align: center; font-weight: 500;"></div>
+            
+            <div style="display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border); padding-top: 16px;">
+                <button type="button" onclick="closeDeleteModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                <button type="button" id="confirm-delete-btn" class="btn btn-danger" style="height: 38px; background-color: var(--danger); color: white; border-color: transparent;">Yes, Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    let isEditing = false;
+    let currentUserId = null;
+    let initialFormValues = {};
+    let deleteUserId = null;
+    let creationSuccess = false;
+
+    // Search functionality
+    document.getElementById('account-search').addEventListener('input', function(e) {
+        const query = e.target.value.toLowerCase();
+        const rows = document.querySelectorAll('#accounts-table-body tr');
+        rows.forEach(row => {
+            if (row.cells.length < 2) return; // skip no results row
+            const text = row.innerText.toLowerCase();
+            if (text.includes(query)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    });
+
+    function toggleTenantSelect() {
+        const role = document.getElementById('admin-role').value;
+        const group = document.getElementById('tenant-select-group');
+        const tenantSelect = document.getElementById('admin-tenant');
+        if (role === 'Super Admin') {
+            group.style.display = 'none';
+            tenantSelect.required = false;
+        } else {
+            group.style.display = 'block';
+            tenantSelect.required = true;
+        }
+    }
+
+    function getFormValues() {
+        return {
+            name: document.getElementById('admin-name').value.trim(),
+            email: document.getElementById('admin-email').value.trim(),
+            phone: document.getElementById('admin-phone').value.trim(),
+            role: document.getElementById('admin-role').value,
+            tenant: document.getElementById('admin-tenant').value
+        };
+    }
+
+    function checkFormChanges() {
+        const currentValues = getFormValues();
+        const saveBtn = document.getElementById('save-account-btn');
+        
+        if (!isEditing) {
+            // Creation mode: check if mandatory fields are filled
+            const isPopulated = currentValues.name !== "" && currentValues.email !== "";
+            saveBtn.disabled = !isPopulated;
+        } else {
+            // Edit mode: compare with initial values
+            const hasChanges = 
+                currentValues.name !== initialFormValues.name ||
+                currentValues.email !== initialFormValues.email ||
+                currentValues.phone !== initialFormValues.phone ||
+                currentValues.role !== initialFormValues.role ||
+                currentValues.tenant !== initialFormValues.tenant;
+            
+            saveBtn.disabled = !hasChanges;
+        }
+    }
+
+    // Attach form listeners
+    ['admin-name', 'admin-email', 'admin-phone', 'admin-role', 'admin-tenant'].forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener('input', checkFormChanges);
+        el.addEventListener('change', checkFormChanges);
+    });
+
+    function showModalStatus(message, isSuccess) {
+        const msgDiv = document.getElementById('modal-status-message');
+        msgDiv.innerHTML = message;
+        msgDiv.style.display = 'block';
+        if (isSuccess) {
+            msgDiv.style.backgroundColor = 'var(--success-bg)';
+            msgDiv.style.color = 'var(--success)';
+            msgDiv.style.border = '1px solid rgba(16, 185, 129, 0.2)';
+        } else {
+            msgDiv.style.backgroundColor = 'var(--danger-bg)';
+            msgDiv.style.color = 'var(--danger)';
+            msgDiv.style.border = '1px solid rgba(239, 68, 68, 0.2)';
+        }
+    }
+
+    function clearModalStatus() {
+        const msgDiv = document.getElementById('modal-status-message');
+        msgDiv.style.display = 'none';
+        msgDiv.innerHTML = '';
+    }
+
+    function openCreateModal() {
+        isEditing = false;
+        currentUserId = null;
+        creationSuccess = false;
+        document.getElementById('modal-title').textContent = "Create New Admin Account";
+        document.getElementById('admin-form').reset();
+        
+        // Restore layout state
+        document.getElementById('form-fields-container').style.display = 'block';
+        document.getElementById('cancel-account-btn').style.display = 'inline-block';
+        
+        // Role is changeable on creation
+        document.getElementById('admin-role').disabled = false;
+        
+        toggleTenantSelect();
+        clearModalStatus();
+        
+        const saveBtn = document.getElementById('save-account-btn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Save Account';
+        
+        document.getElementById('admin-modal').style.display = 'flex';
+    }
+
+    function openEditModal(userId, name, email, phone, role, tenantId) {
+        isEditing = true;
+        currentUserId = userId;
+        creationSuccess = false;
+        document.getElementById('modal-title').textContent = "Edit Admin Account";
+        document.getElementById('admin-name').value = name;
+        document.getElementById('admin-email').value = email;
+        document.getElementById('admin-phone').value = phone;
+        document.getElementById('admin-role').value = role;
+        document.getElementById('admin-tenant').value = tenantId;
+        
+        // Restore layout state
+        document.getElementById('form-fields-container').style.display = 'block';
+        document.getElementById('cancel-account-btn').style.display = 'inline-block';
+        
+        // Disable role modification in edit mode
+        document.getElementById('admin-role').disabled = true;
+        
+        toggleTenantSelect();
+        clearModalStatus();
+        
+        // Track changes
+        initialFormValues = getFormValues();
+        
+        const saveBtn = document.getElementById('save-account-btn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Save Account';
+        
+        document.getElementById('admin-modal').style.display = 'flex';
+    }
+
+    function closeModal() {
+        if (creationSuccess) {
+            window.location.reload();
+        } else {
+            document.getElementById('admin-modal').style.display = 'none';
+        }
+    }
+
+    function saveAdmin(event) {
+        event.preventDefault();
+        
+        if (creationSuccess) {
+            window.location.reload();
+            return;
+        }
+        
+        const saveBtn = document.getElementById('save-account-btn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+        clearModalStatus();
+        
+        const name = document.getElementById('admin-name').value.trim();
+        const email = document.getElementById('admin-email').value.trim();
+        const phone = document.getElementById('admin-phone').value.trim();
+        const role = document.getElementById('admin-role').value;
+        const restaurant_id = role === 'Super Admin' ? null : parseInt(document.getElementById('admin-tenant').value) || null;
+        
+        const payload = {
+            name: name,
+            email: email,
+            phone_number: phone,
+            role: role,
+            restaurant_id: restaurant_id
+        };
+
+        const url = isEditing ? `/superadmin/accounts/${currentUserId}/edit` : `/superadmin/accounts`;
+        
+        fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to save account");
+            
+            if (isEditing) {
+                showModalStatus("Account updated successfully!", true);
+                setTimeout(() => {
+                    closeModal();
+                    window.location.reload();
+                }, 1500);
+            } else {
+                creationSuccess = true;
+                // Hide input fields & cancel button
+                document.getElementById('form-fields-container').style.display = 'none';
+                document.getElementById('cancel-account-btn').style.display = 'none';
+                
+                // Format credentials box
+                const credentialsHtml = `
+                    <div style="text-align: left; padding: 10px 0;">
+                        <div style="font-weight: 600; color: var(--success); margin-bottom: 12px; font-size: 15px; text-align: center;">Account Created Successfully!</div>
+                        <div style="background-color: var(--background); border: 1px solid var(--border); border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+                            <div style="margin-bottom: 8px;">
+                                <span style="font-size: 11px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.5px;">TEMPORARY USERNAME</span>
+                                <div style="font-family: monospace; font-size: 14px; font-weight: 600; color: var(--text-primary); margin-top: 2px;">${data.username}</div>
+                            </div>
+                            <div>
+                                <span style="font-size: 11px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.5px;">TEMPORARY PASSWORD</span>
+                                <div style="font-family: monospace; font-size: 14px; font-weight: 600; color: var(--primary); margin-top: 2px;">${data.password}</div>
+                            </div>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary); text-align: center;">
+                            Credentials have been sent to the admin's email. Please copy them now before closing.
+                        </div>
+                    </div>
+                `;
+                showModalStatus(credentialsHtml, true);
+                
+                // Allow user to click Done to reload
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Done';
+            }
+        })
+        .catch(err => {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Account';
+            showModalStatus(err.message, false);
+        });
+    }
+
+    function openDeleteModal(userId, name) {
+        deleteUserId = userId;
+        document.getElementById('delete-admin-name').textContent = name;
+        
+        // Clear messages
+        const errorDiv = document.getElementById('delete-error-message');
+        const successDiv = document.getElementById('delete-success-message');
+        errorDiv.style.display = 'none';
+        errorDiv.textContent = '';
+        successDiv.style.display = 'none';
+        successDiv.textContent = '';
+        
+        document.getElementById('confirm-delete-btn').disabled = false;
+        document.getElementById('confirm-delete-btn').textContent = 'Yes, Delete';
+        
+        document.getElementById('delete-confirm-modal').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('delete-confirm-modal').style.display = 'none';
+        deleteUserId = null;
+    }
+
+    document.getElementById('confirm-delete-btn').addEventListener('click', () => {
+        if (!deleteUserId) return;
+        
+        const deleteBtn = document.getElementById('confirm-delete-btn');
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = 'Deleting...';
+        
+        const errorDiv = document.getElementById('delete-error-message');
+        const successDiv = document.getElementById('delete-success-message');
+        
+        errorDiv.style.display = 'none';
+        
+        fetch(`/superadmin/accounts/${deleteUserId}/delete`, {
+            method: "POST"
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to delete account");
+            
+            successDiv.textContent = "Account deleted successfully.";
+            successDiv.style.display = 'block';
+            
+            setTimeout(() => {
+                closeDeleteModal();
+                window.location.reload();
+            }, 1500);
+        })
+        .catch(err => {
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = 'Yes, Delete';
+            errorDiv.textContent = err.message;
+            errorDiv.style.display = 'block';
+        });
+    });
+</script>
+
+<style>
+    #save-account-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+</style>
+{% endblock %}
+{% endblock %}

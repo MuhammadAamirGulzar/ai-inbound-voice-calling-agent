@@ -1,0 +1,21 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated data (kept locally, never committed)
+data/raw/*
+data/processed/*
+data/chroma_db/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/chroma_db/.gitkeep
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/

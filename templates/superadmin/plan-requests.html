@@ -1,0 +1,191 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-plan-requests' %}
+
+{% block title %}Plan Change Requests - Super Admin{% endblock %}
+
+{% block extra_css %}
+<style>
+    .status-badge-pending { background-color: var(--warning-bg); color: var(--warning); font-weight: 600; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+    .status-badge-approved { background-color: var(--success-bg); color: var(--success); font-weight: 600; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+    .status-badge-rejected { background-color: var(--danger-bg); color: var(--danger); font-weight: 600; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+    .plan-arrow { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+    .plan-chip { padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+    .plan-chip-from { background-color: #F3F4F6; color: #374151; }
+    .plan-chip-to { background-color: var(--primary-light); color: var(--primary); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+    .modal-box { background: var(--surface); border-radius: var(--radius-lg); padding: 32px; width: 100%; max-width: 480px; box-shadow: var(--shadow-lg); }
+    .modal-title { font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+    .modal-subtitle { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Plan Change Requests</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Review and act on subscription upgrade/change requests submitted by restaurant admins.
+        </div>
+    </div>
+    {% if pending_count > 0 %}
+    <div>
+        <span style="background-color: var(--warning-bg); color: var(--warning); font-size: 14px; font-weight: 600; padding: 8px 16px; border-radius: 20px;">
+            <i class="fa-solid fa-clock mr-2"></i>{{ pending_count }} Pending
+        </span>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Restaurant</th>
+                    <th>Plan Change</th>
+                    <th>Admin Note</th>
+                    <th>Requested At</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pr in plan_requests %}
+                <tr>
+                    <td class="font-semibold" style="color: var(--text-secondary);">{{ pr.id }}</td>
+                    <td>
+                        <div class="font-semibold">{{ pr.restaurant.name if pr.restaurant else 'Unknown' }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">Restaurant #{{ pr.restaurant_id }}</div>
+                    </td>
+                    <td>
+                        <div class="plan-arrow">
+                            <span class="plan-chip plan-chip-from">{{ pr.current_plan.replace('_', ' ').title() }}</span>
+                            <i class="fa-solid fa-arrow-right" style="color: var(--text-secondary); font-size: 11px;"></i>
+                            <span class="plan-chip plan-chip-to">{{ pr.requested_plan.replace('_', ' ').title() }}</span>
+                        </div>
+                    </td>
+                    <td style="max-width: 200px;">
+                        <span style="font-size: 13px; color: var(--text-secondary);">{{ pr.admin_note or '—' }}</span>
+                    </td>
+                    <td>
+                        <div style="font-size: 13px; color: var(--text-secondary);">{{ pr.created_at.strftime('%b %d, %Y') if pr.created_at else '—' }}</div>
+                        <div style="font-size: 11px; color: var(--text-secondary);">{{ pr.created_at.strftime('%I:%M %p') if pr.created_at else '' }}</div>
+                    </td>
+                    <td>
+                        {% if pr.status == 'pending' %}
+                        <span class="status-badge-pending"><i class="fa-solid fa-clock mr-1"></i>Pending</span>
+                        {% elif pr.status == 'approved' %}
+                        <span class="status-badge-approved"><i class="fa-solid fa-check mr-1"></i>Approved</span>
+                        {% else %}
+                        <span class="status-badge-rejected"><i class="fa-solid fa-xmark mr-1"></i>Rejected</span>
+                        {% endif %}
+                        {% if pr.superadmin_note %}
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">Note: {{ pr.superadmin_note }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if pr.status == 'pending' %}
+                        <div style="display: flex; gap: 8px;">
+                            <button
+                                onclick="openReviewModal({{ pr.id }}, '{{ pr.restaurant.name if pr.restaurant else 'Restaurant' }}', '{{ pr.requested_plan }}')"
+                                class="btn btn-primary" style="padding: 6px 14px; font-size: 12px;">
+                                <i class="fa-solid fa-gavel mr-1"></i>Review
+                            </button>
+                        </div>
+                        {% else %}
+                        <span style="font-size: 12px; color: var(--text-secondary);">Resolved {{ pr.resolved_at.strftime('%b %d') if pr.resolved_at else '' }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                        <i class="fa-solid fa-inbox" style="font-size: 32px; margin-bottom: 12px; display: block;"></i>
+                        No plan change requests yet.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Review Modal -->
+<div id="review-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-box">
+        <div class="modal-title"><i class="fa-solid fa-gavel mr-2" style="color: var(--primary);"></i>Review Plan Change Request</div>
+        <div class="modal-subtitle" id="review-modal-subtitle">Loading...</div>
+
+        <div class="form-group" style="margin-bottom: 16px;">
+            <label class="form-label">Optional Note / Reason</label>
+            <textarea id="review-note" class="form-control" rows="3" placeholder="e.g. Approved as requested. Payment confirmed." style="resize: none;"></textarea>
+        </div>
+
+        <div style="display: flex; gap: 12px; margin-top: 20px;">
+            <button id="btn-approve" onclick="submitReview('approved')" class="btn btn-primary" style="flex: 1; background-color: var(--success); border-color: var(--success);">
+                <i class="fa-solid fa-check mr-2"></i>Approve
+            </button>
+            <button id="btn-reject" onclick="submitReview('rejected')" class="btn btn-primary" style="flex: 1; background-color: var(--danger); border-color: var(--danger);">
+                <i class="fa-solid fa-xmark mr-2"></i>Reject
+            </button>
+            <button onclick="closeReviewModal()" class="btn btn-secondary" style="padding: 10px 20px;">Cancel</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentReqId = null;
+const planLabels = { monthly: 'Monthly', six_monthly: '6-Month', annually: 'Annual' };
+
+function openReviewModal(reqId, restaurantName, requestedPlan) {
+    currentReqId = reqId;
+    document.getElementById('review-modal-subtitle').textContent =
+        `${restaurantName} is requesting to switch to the ${planLabels[requestedPlan] || requestedPlan} Plan.`;
+    document.getElementById('review-note').value = '';
+    document.getElementById('review-modal').style.display = 'flex';
+}
+
+function closeReviewModal() {
+    document.getElementById('review-modal').style.display = 'none';
+    currentReqId = null;
+}
+
+async function submitReview(status) {
+    if (!currentReqId) return;
+
+    const note = document.getElementById('review-note').value.trim();
+    const btnApprove = document.getElementById('btn-approve');
+    const btnReject = document.getElementById('btn-reject');
+    btnApprove.disabled = true;
+    btnReject.disabled = true;
+
+    try {
+        const res = await fetch(`/superadmin/plan-requests/${currentReqId}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, superadmin_note: note || null })
+        });
+        const data = await res.json();
+        if (data.success) {
+            closeReviewModal();
+            window.location.reload();
+        } else {
+            alert(data.error || 'An error occurred.');
+        }
+    } catch (e) {
+        alert('Network error. Please try again.');
+    } finally {
+        btnApprove.disabled = false;
+        btnReject.disabled = false;
+    }
+}
+
+// Close on overlay click
+document.getElementById('review-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeReviewModal();
+});
+</script>
+{% endblock %}

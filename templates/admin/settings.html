@@ -1,0 +1,334 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'settings' %}
+
+{% block title %}Settings - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Account & Configuration Settings</h1>
+    <div style="font-size: 14px; color: var(--text-secondary);">
+        Configure your restaurant profile, AI voice prompt, and Twilio endpoints
+    </div>
+</div>
+
+<!-- Sub-navigation for settings sections -->
+<div class="sub-nav">
+    <button class="sub-nav-btn active" data-tab="profile">Restaurant Profile</button>
+    <button class="sub-nav-btn" data-tab="telephony">Telephony & Webhooks</button>
+    <button class="sub-nav-btn" data-tab="fulfillment">Integration & Dispatch</button>
+</div>
+
+<!-- Settings forms -->
+<div class="card">
+    <div class="card-body" style="padding: 32px;">
+        
+        <!-- Profile Settings Form -->
+        <form id="settings-profile" class="settings-panel">
+            <h3 class="font-semibold" style="font-size: 16px; margin-bottom: 20px; color: var(--text-primary);">Restaurant Profile Information</h3>
+            
+            <div class="form-row" style="display: flex; gap: 20px;">
+                <div class="form-group" style="flex: 1;">
+                    <label class="form-label" for="rest-name">Restaurant Name</label>
+                    <input class="form-control" type="text" id="rest-name" value="{{ restaurant_name or '' }}" required>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label class="form-label" for="rest-phone">Contact Number</label>
+                    <input class="form-control" type="tel" id="rest-phone" value="{{ current_user.restaurant.mobile_number or '' }}" required>
+                </div>
+            </div>
+
+            <h3 class="font-semibold" style="font-size: 16px; margin-top: 30px; margin-bottom: 20px; color: var(--text-primary);">AI Voice Agent Prompts</h3>
+
+            <div class="form-group" style="margin-top: 15px;">
+                <label class="form-label" for="agent-instruction">LLM Behaviour Guidelines / System Prompt</label>
+                <textarea class="form-control" id="agent-instruction" rows="5" style="font-family: monospace; font-size: 13px;" required>{{ system_prompt or '' }}</textarea>
+                <span class="form-help-text" style="font-size: 12px; color: var(--text-secondary); display: block; margin-top: 4px;">Core behavioral rules, language guidelines, upselling guidelines, and pricing bounds. Keep it brief.</span>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+                <button type="submit" class="btn btn-primary"><i class="fa-solid fa-circle-check mr-2"></i>Save Changes</button>
+            </div>
+        </form>
+
+        <!-- Telephony Settings -->
+        <form id="settings-telephony" class="settings-panel" style="display: none;">
+            <h3 class="font-semibold" style="font-size: 16px; margin-bottom: 20px; color: var(--text-primary);">Twilio Webhook & Integration Configuration</h3>
+            
+            <div class="form-group">
+                <label class="form-label" for="webhook-url">Inbound Twilio Media Stream Webhook URI</label>
+                <div style="display: flex; gap: 8px;">
+                    <input class="form-control" type="text" id="webhook-url" value="{{ webhook_url }}" readonly style="background-color: var(--background); color: var(--text-secondary); font-family: monospace;">
+                    <button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText('{{ webhook_url }}'); showToast('Webhook URI copied to clipboard!');"><i class="fa-solid fa-copy"></i></button>
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Set this endpoint URI inside your Twilio Console for voice incoming calls streaming.</div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="twilio-number">Twilio Main Telephony Number</label>
+                <input class="form-control" type="text" id="twilio-number" value="{{ current_user.restaurant.order_phone_number or '' }}" placeholder="+1234567890" required>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+                <button type="submit" class="btn btn-primary"><i class="fa-solid fa-circle-check mr-2"></i>Save Integration</button>
+            </div>
+        </form>
+
+        <!-- Fulfillment Settings -->
+        <form id="settings-fulfillment" class="settings-panel" style="display: none;" method="POST" action="/admin/settings/fulfillment">
+            <h3 class="font-semibold" style="font-size: 16px; margin-bottom: 20px; color: var(--text-primary);">Integration & Dispatch Configuration</h3>
+            
+            <div class="form-group">
+                <label class="form-label" for="integration-type">Integration Type</label>
+                <select class="form-control" id="integration-type" name="integration_type" style="padding: 10px 14px; font-weight: 500;">
+                    <option value="manual_redirect" {% if current_user.restaurant.fulfillment_integration_type == 'manual_redirect' %}selected{% endif %}>Manual Redirect (Open link in new tab)</option>
+                    <option value="webhook" disabled title="Available once configured with your system">Webhook POST (Coming Soon)</option>
+                    <option value="foodpanda" disabled title="Available once configured with your system">Foodpanda API (Coming Soon)</option>
+                </select>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">How orders should be handed off to your restaurant's internal system.</div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="target-url">Your Order System URL</label>
+                <input class="form-control" type="url" id="target-url" name="target_url" value="{{ current_user.restaurant.fulfillment_target_url or '' }}" placeholder="https://your-restaurant-pos.com/admin/orders/new" required>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">The destination URL for manual redirects or webhook payloads.</div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px;">
+                <button type="submit" class="btn btn-primary"><i class="fa-solid fa-circle-check mr-2"></i>Save Integration Settings</button>
+            </div>
+        </form>
+
+    </div>
+</div>
+
+<!-- Toast Notification Container -->
+<div id="toast" style="visibility: hidden; min-width: 250px; background-color: var(--success); color: #fff; text-align: center; border-radius: 6px; padding: 16px; position: fixed; z-index: 9999; right: 30px; bottom: 30px; font-size: 14px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transition: opacity 0.3s, visibility 0.3s;">
+    Settings saved successfully!
+</div>
+
+{% block extra_js %}
+<script>
+    // Tab selector logic within configuration
+    const tabs = document.querySelectorAll('.sub-nav-btn');
+    const panels = document.querySelectorAll('.settings-panel');
+
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+
+            const section = tab.getAttribute('data-tab');
+            panels.forEach(p => {
+                if (p.id === `settings-${section}`) {
+                    p.style.display = 'block';
+                } else {
+                    p.style.display = 'none';
+                }
+            });
+        });
+    });
+
+    // Toast notification logic
+    function showToast(message, isError = false) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.style.backgroundColor = isError ? 'var(--danger)' : 'var(--success)';
+        toast.style.visibility = 'visible';
+        toast.style.opacity = '1';
+        
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => { toast.style.visibility = 'hidden'; }, 300);
+        }, 3000);
+    }
+
+    // Form state & change tracking logic
+    const initialFormStates = new Map();
+
+    function formatTimeTo12Hour(timeStr) {
+        if (!timeStr) return "12:00 PM";
+        const parts = timeStr.split(':');
+        let h = parseInt(parts[0], 10);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12;
+        h = h ? h : 12;
+        const m = parts[1] || '00';
+        return `${h.toString().padStart(2, '0')}:${m} ${ampm}`;
+    }
+
+    function captureFormState(form) {
+        const state = {};
+        const inputs = form.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+            if (input.id || input.name) {
+                state[input.id || input.name] = input.value;
+            }
+        });
+        return state;
+    }
+
+    function initFormChangeTracking(form) {
+        const initialState = captureFormState(form);
+        initialFormStates.set(form.id, initialState);
+
+        const saveBtn = form.querySelector('button[type="submit"]');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+        }
+
+        const checkChanges = () => {
+            const current = captureFormState(form);
+            const initial = initialFormStates.get(form.id);
+            let hasChanged = false;
+            for (const key in initial) {
+                if (initial[key] !== current[key]) {
+                    hasChanged = true;
+                    break;
+                }
+            }
+            if (saveBtn) {
+                saveBtn.disabled = !hasChanged;
+            }
+        };
+
+        form.addEventListener('input', checkChanges);
+        form.addEventListener('change', checkChanges);
+    }
+
+    function updateFormBaseline(form) {
+        const newState = captureFormState(form);
+        initialFormStates.set(form.id, newState);
+        const saveBtn = form.querySelector('button[type="submit"]');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+        }
+    }
+
+    const forms = document.querySelectorAll('.settings-panel');
+    forms.forEach(form => {
+        initFormChangeTracking(form);
+    });
+
+    // Form save logic
+    forms.forEach(form => {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (form.id === 'settings-profile') {
+                const name = form.querySelector('#rest-name').value;
+                const phone = form.querySelector('#rest-phone').value;
+
+                const instruction = form.querySelector('#agent-instruction').value;
+                
+                try {
+                    const response = await fetch('/admin/settings/profile', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: name,
+                            mobile_number: phone,
+
+                            system_prompt: instruction
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        showToast('Profile settings updated successfully!');
+                        updateFormBaseline(form);
+                    } else {
+                        const data = await response.json();
+                        showToast('Error: ' + (data.error || response.statusText), true);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showToast('Connection error', true);
+                }
+            } else if (form.id === 'settings-agent') {
+                const voice = form.querySelector('#agent-voice').value;
+                const greeting = form.querySelector('#agent-greeting').value;
+                const instruction = form.querySelector('#agent-instruction').value;
+                
+                try {
+                    const response = await fetch('/admin/settings/agent', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            voice_engine: voice,
+                            greeting_message: greeting,
+                            system_prompt: instruction
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        showToast('Agent configuration updated successfully!');
+                        updateFormBaseline(form);
+                    } else {
+                        const data = await response.json();
+                        showToast('Error: ' + (data.error || response.statusText), true);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showToast('Connection error', true);
+                }
+            } else if (form.id === 'settings-telephony') {
+                const twilioNumber = form.querySelector('#twilio-number').value;
+                
+                try {
+                    const response = await fetch('/admin/settings/telephony', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            order_phone_number: twilioNumber
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        showToast('Telephony settings updated successfully!');
+                        updateFormBaseline(form);
+                    } else {
+                        const data = await response.json();
+                        showToast('Error: ' + (data.error || response.statusText), true);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showToast('Connection error', true);
+                }
+            } else if (form.id === 'settings-fulfillment') {
+                const integrationType = form.querySelector('#integration-type').value;
+                const targetUrl = form.querySelector('#target-url').value;
+                
+                try {
+                    const response = await fetch('/admin/settings/fulfillment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            integration_type: integrationType,
+                            target_url: targetUrl || null
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        let msg = 'Integration settings updated successfully!';
+                        if (data.dispatched_count > 0 || data.failed_count > 0) {
+                            msg += ` Dispatched ${data.dispatched_count} pending orders.`;
+                            if (data.failed_count > 0) {
+                                msg += ` (${data.failed_count} failed)`;
+                            }
+                        }
+                        showToast(msg);
+                        updateFormBaseline(form);
+                    } else {
+                        const data = await response.json();
+                        showToast('Error: ' + (data.error || response.statusText), true);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showToast('Connection error', true);
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

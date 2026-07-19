@@ -1,0 +1,259 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'orders' %}
+
+{% block title %}Order Details - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display: flex; align-items: center; gap: 12px;">
+        <a href="/admin/orders" class="btn btn-secondary" style="padding: 8px 12px;"><i class="fa-solid fa-arrow-left"></i> Back</a>
+        <h1 class="page-title" style="margin: 0;">Order #{{ order.id }}</h1>
+    </div>
+    <div>
+        <span class="badge {% if order.status.lower() == 'confirmed' %}badge-success{% elif order.status.lower() == 'pending' %}badge-warning{% else %}badge-danger{% endif %}" id="order-status-badge" style="font-size: 14px; padding: 6px 14px;">
+            {{ order.status.title() }}
+        </span>
+    </div>
+</div>
+
+<div class="detail-layout">
+    <!-- Left Pane: Order Items & Total -->
+    <div>
+        <!-- Itemized Receipt -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title"><i class="fa-solid fa-receipt mr-2" style="color: var(--primary);"></i>Itemized Receipt</div>
+            </div>
+            <div class="card-body">
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                    {% if order.items_summary and order.items_summary is iterable %}
+                        {% for item in order.items_summary %}
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+                            <div>
+                                <span class="font-semibold" style="font-size: 15px;">{{ item['item'] | default('Unknown') }}</span>
+                                <div style="font-size: 13px; color: var(--text-secondary);">PKR {{ "{:,.0f}".format(item['price'] | default(0) | int) }} each</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span style="font-size: 14px; color: var(--text-secondary); margin-right: 24px;">Qty: {{ item['qty'] | default(1) }}</span>
+                                <span class="font-bold" style="font-size: 15px;">PKR {{ "{:,.0f}".format((item['price'] | default(0) | int) * (item['qty'] | default(1) | int)) }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div style="padding: 16px; text-align: center; color: var(--text-secondary);">No items logged.</div>
+                    {% endif %}
+
+                    <!-- Receipt Totals -->
+                    <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 14px; color: var(--text-secondary);">
+                            <span>Subtotal</span>
+                            <span>PKR {{ "{:,.0f}".format(subtotal) }}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: 700; border-top: 2px dashed var(--border); padding-top: 12px; color: var(--text-primary);">
+                            <span>Total Bill</span>
+                            <span>PKR {{ "{:,.0f}".format(order.total_price) }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Linked Caller Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Customer Information</div>
+            </div>
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div class="font-semibold" style="font-size: 15px;">{{ order.customer_phone or 'Unknown' }}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;">
+                            Placed via AI agent call.
+                            {% if order.created_at %}
+                            Placed on {{ order.created_at | pk_time("%B %d, %Y %I:%M %p") }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if order.call_id %}
+                    <a href="/admin/call-detail?id={{ order.call_id }}" class="btn btn-secondary"><i class="fa-solid fa-phone mr-2"></i>View Call Details</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Pane: Interactive Workflow State Selector -->
+    <div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Fulfillment Workflow</div>
+            </div>
+            <div class="card-body">
+                <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px;">
+                    <div>
+                        <span class="form-label" style="display: block; margin-bottom: 6px; font-weight: 500; font-size: 13px; color: var(--text-secondary);">Order Status</span>
+                        <div style="font-size: 18px; font-weight: 700; color: var(--text-primary);">
+                            {{ order.status }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Failed Dispatch Warning (for Confirmed orders with errors) -->
+                {% if order.status.lower() == 'confirmed' and order.dispatch_attempts > 0 and not order.dispatched_to_external_system %}
+                    <div style="background-color: var(--danger-bg); color: var(--danger); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--danger); font-size: 13px; line-height: 1.4; margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px;">
+                        <div style="font-weight: 600;"><i class="fa-solid fa-circle-exclamation mr-1"></i> Dispatch Failed (Attempt #{{ order.dispatch_attempts }})</div>
+                        <div style="word-break: break-word;">Error: {{ order.last_dispatch_error or 'Unknown connection error' }}</div>
+                    </div>
+                {% endif %}
+
+                <!-- Action buttons based on status -->
+                <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+                    {% if order.status.lower() == 'pending' %}
+                        {% if not order.restaurant.fulfillment_target_url %}
+                            <div style="background-color: var(--warning-bg); color: var(--warning); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--warning); font-size: 13px; line-height: 1.4; display: flex; flex-direction: column; gap: 8px;">
+                                <div style="font-weight: 600;"><i class="fa-solid fa-triangle-exclamation mr-1"></i> No order-system URL configured for this restaurant.</div>
+                                <a href="/admin/settings" style="color: var(--primary); font-weight: 500; text-decoration: underline;">Go to Settings to configure</a>
+                            </div>
+                            <button id="btn-confirm" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px;"><i class="fa-solid fa-check mr-2"></i>Confirm Order</button>
+                        {% else %}
+                            <button id="btn-dispatch" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; background-color: var(--success); border-color: var(--success);"><i class="fa-solid fa-share-from-square mr-2"></i>Send to {{ order.restaurant.name }}'s System</button>
+                            <button id="btn-confirm" class="btn btn-secondary" style="width: 100%; justify-content: center; padding: 12px;"><i class="fa-solid fa-check mr-2"></i>Confirm Order Manually</button>
+                        {% endif %}
+                        <button id="btn-cancel" class="btn btn-secondary" style="width: 100%; justify-content: center; padding: 12px; border-color: var(--danger); color: var(--danger);"><i class="fa-solid fa-xmark mr-2"></i>Cancel Order</button>
+                    {% elif order.status.lower() == 'confirmed' %}
+                        {% if not order.dispatched_to_external_system %}
+                            <button id="btn-dispatch" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; background-color: var(--success); border-color: var(--success);"><i class="fa-solid fa-share-from-square mr-2"></i>Send to {{ order.restaurant.name }}'s System</button>
+                        {% endif %}
+                    {% endif %}
+                </div>
+
+                <!-- Step Tracker / Audit Trail visualization -->
+                <div style="display: flex; flex-direction: column; gap: 20px; border-left: 2px solid var(--border); padding-left: 20px; margin-left: 10px; position: relative;">
+                    <div id="step-pending" class="workflow-step" style="position: relative;">
+                        <span class="step-dot" style="position: absolute; left: -26px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background-color: var(--primary);"></span>
+                        <div class="font-semibold" style="font-size: 14px; color: var(--text-primary);">Order Booked by AI</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">
+                            {{ order.created_at | pk_time("%I:%M %p") if order.created_at else '' }}
+                        </div>
+                    </div>
+
+                    {% if order.status.lower() in ['confirmed', 'cancelled'] or order.dispatched_to_external_system %}
+                    <div id="step-confirmed" class="workflow-step" style="position: relative;">
+                        <span class="step-dot" style="position: absolute; left: -26px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background-color: {% if order.status.lower() == 'cancelled' %}var(--danger){% else %}var(--primary){% endif %};"></span>
+                        <div class="font-semibold" style="font-size: 14px; color: var(--text-primary);">
+                            {% if order.status.lower() == 'cancelled' %}Order Cancelled{% else %}Order Confirmed{% endif %}
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">
+                            Processed
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if order.dispatched_to_external_system %}
+                    <div id="step-dispatched" class="workflow-step" style="position: relative;">
+                        <span class="step-dot" style="position: absolute; left: -26px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background-color: var(--success);"></span>
+                        <div class="font-semibold" style="font-size: 14px; color: var(--text-primary);">Sent to restaurant system</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">
+                            Sent at {{ order.dispatched_at | pk_time("%b %d, %I:%M %p") if order.dispatched_at else '' }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Notification Container -->
+<div id="toast" style="visibility: hidden; min-width: 250px; background-color: var(--success); color: #fff; text-align: center; border-radius: 6px; padding: 16px; position: fixed; z-index: 9999; right: 30px; bottom: 30px; font-size: 14px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transition: opacity 0.3s, visibility 0.3s;">
+    Success!
+</div>
+
+{% block extra_js %}
+<script>
+    function showToast(message, isError = false) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.style.backgroundColor = isError ? 'var(--danger)' : 'var(--success)';
+        toast.style.visibility = 'visible';
+        toast.style.opacity = '1';
+        
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => { toast.style.visibility = 'hidden'; }, 300);
+        }, 3000);
+    }
+    const btnConfirm = document.getElementById('btn-confirm');
+    const btnCancel = document.getElementById('btn-cancel');
+    const btnDispatch = document.getElementById('btn-dispatch');
+
+    if (btnConfirm) {
+        btnConfirm.addEventListener('click', async () => {
+            try {
+                const response = await fetch(`/admin/orders/{{ order.id }}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'Confirmed' })
+                });
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    const data = await response.json();
+                    showToast('Error: ' + (data.error || response.statusText), true);
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('Connection error', true);
+            }
+        });
+    }
+
+    if (btnCancel) {
+        btnCancel.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to cancel this order?')) return;
+            try {
+                const response = await fetch(`/admin/orders/{{ order.id }}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'Cancelled' })
+                });
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    const data = await response.json();
+                    showToast('Error: ' + (data.error || response.statusText), true);
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('Connection error', true);
+            }
+        });
+    }
+
+    if (btnDispatch) {
+        btnDispatch.addEventListener('click', async () => {
+            try {
+                const response = await fetch(`/admin/orders/{{ order.id }}/dispatch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    if (data.redirect_url) {
+                        window.open(data.redirect_url, '_blank');
+                    } else {
+                        showToast(data.message || 'Dispatched successfully!');
+                    }
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    showToast('Error: ' + (data.error || response.statusText), true);
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('Connection error', true);
+            }
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

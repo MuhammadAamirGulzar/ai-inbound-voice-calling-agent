@@ -1,0 +1,39 @@
+schema.db
+response_times.log
+en_US-ryan-high.onnx
+en_US-ryan-high.onnx.json
+en_US-ryan-medium.onnx
+en_US-ryan-medium.onnx.json
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Sensitive material
+keys/*.pem
+
+# Runtime artifacts
+*.wav
+*.zip
+*.log
+*.db
+
+# Notebooks
+*.ipynb
+
+# Python caches and virtual environments
+.venv/
+venv/
+.pytest_cache/
+
+# Node and build output in embedded crawler
+gpt-crawler/node_modules/
+gpt-crawler/dist/
+gpt-crawler/storage/
+gpt-crawler/*.json
+!gpt-crawler/.env.example
+.cache
+.playwright-browsers
+tmp/
+scratch/

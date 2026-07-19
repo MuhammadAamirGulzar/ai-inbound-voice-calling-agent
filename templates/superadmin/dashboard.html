@@ -1,0 +1,205 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-dashboard' %}
+
+{% block title %}Platform Overview - Super Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Platform Overview</h1>
+    <div style="font-size: 14px; color: var(--text-secondary);">
+        High-level metrics across all onboarded restaurants and system health.
+    </div>
+</div>
+
+<!-- System Health Strip -->
+<div class="card" style="margin-bottom: 24px; border-left: 4px solid var(--success);">
+    <div class="card-body" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px;">
+        <div style="display: flex; align-items: center; gap: 24px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-server" style="color: var(--success);"></i>
+                <span style="font-size: 13px; font-weight: 600;">Core API: <span style="color: var(--success); font-weight: normal;">Healthy</span></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-phone-flip" style="color: var(--success);"></i>
+                <span style="font-size: 13px; font-weight: 600;">Twilio SIP/Telephony: <span style="color: var(--success); font-weight: normal;">Connected</span></span>
+            </div>
+        </div>
+        <div style="font-size: 12px; color: var(--text-secondary);">
+            Last checked: Just now
+        </div>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Total Restaurants Onboarded</span>
+            <i class="fa-solid fa-store" style="color: var(--primary);"></i>
+        </div>
+        <div class="kpi-value">{{ total_restaurants }}</div>
+        <div class="kpi-trend up">
+            <i class="fa-solid fa-arrow-trend-up"></i> +3 this week
+        </div>
+    </div>
+    
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Active Subscriptions</span>
+            <i class="fa-solid fa-gem" style="color: var(--success);"></i>
+        </div>
+        <div class="kpi-value">{{ active_subscriptions }}</div>
+        <div class="kpi-trend up">
+            <i class="fa-solid fa-arrow-trend-up"></i> 90% retention rate
+        </div>
+    </div>
+    
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Total Calls Today</span>
+            <i class="fa-solid fa-phone-volume" style="color: var(--info);"></i>
+        </div>
+        <div class="kpi-value">{{ "{:,}".format(total_calls_today) }}</div>
+        <div class="kpi-trend up">
+            <i class="fa-solid fa-arrow-trend-up"></i> Peak load ongoing
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-header">
+            <span>Total Orders Booked</span>
+            <i class="fa-solid fa-receipt" style="color: var(--success);"></i>
+        </div>
+        <div class="kpi-value">{{ "{:,}".format(total_orders) }}</div>
+        <div class="kpi-trend up">
+            <i class="fa-solid fa-arrow-trend-up"></i> 68% conversion avg
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    <!-- Call Volume Trend Chart -->
+    <div class="card" style="grid-column: span 2;">
+        <div class="card-header">
+            <div class="card-title">Platform-Wide Call Volume (Last 7 Days)</div>
+        </div>
+        <div class="card-body">
+            <div style="position: relative; height: 250px; width: 100%; border-bottom: 2px solid var(--border); border-left: 2px solid var(--border); padding-left: 10px;">
+                <svg id="dash-chart-svg" width="100%" height="100%" viewBox="0 0 800 200" preserveAspectRatio="none">
+                    <!-- Grid Lines -->
+                    <line x1="0" y1="50" x2="800" y2="50" stroke="#f3f4f6" stroke-width="1" stroke-dasharray="4"/>
+                    <line x1="0" y1="100" x2="800" y2="100" stroke="#f3f4f6" stroke-width="1" stroke-dasharray="4"/>
+                    <line x1="0" y1="150" x2="800" y2="150" stroke="#f3f4f6" stroke-width="1" stroke-dasharray="4"/>
+                    <!-- Y Axis placeholders -->
+                    <text id="dash-y-max" x="-5" y="10" font-size="10" fill="#6b7280" text-anchor="end">0</text>
+                    <text id="dash-y-mid" x="-5" y="105" font-size="10" fill="#6b7280" text-anchor="end">0</text>
+                    <text x="-5" y="200" font-size="10" fill="#6b7280" text-anchor="end">0</text>
+                    <path id="dash-call-path" d="" fill="none" style="stroke: var(--primary);" stroke-width="3"/>
+                    <g id="dash-points"></g>
+                </svg>
+            </div>
+            <!-- X Axis Labels -->
+            <div id="dash-x-labels" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-top: 8px; padding-left: 10px;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Recently Onboarded Restaurants List -->
+<div class="card" style="margin-top: 24px;">
+    <div class="card-header">
+        <div class="card-title">Recently Onboarded Restaurants</div>
+        <a href="/superadmin/restaurants" class="link" style="font-size: 13px;">View All</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Restaurant Name</th>
+                    <th>Plan</th>
+                    <th>Status</th>
+                    <th>Date Added</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for restaurant in recent_restaurants %}
+                <tr>
+                    <td>
+                        <div class="font-semibold">{{ restaurant.name }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">{{ restaurant.mobile_number }}</div>
+                    </td>
+                    <td>
+                        <span style="font-size: 13px; font-weight: 500;">
+                            {% if restaurant.subscription_plan == 'monthly' %}Monthly Plan
+                            {% elif restaurant.subscription_plan == 'six_monthly' %}6-Month Plan
+                            {% elif restaurant.subscription_plan == 'annually' %}Annual Plan
+                            {% else %}Free Trial{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        {% if restaurant.is_suspended %}
+                            <span class="badge badge-danger">Suspended</span>
+                        {% else %}
+                            <span class="badge badge-success">Active</span>
+                        {% endif %}
+                    </td>
+                    <td><div style="font-size: 13px; color: var(--text-secondary);">{{ restaurant.created_at.strftime('%b %d, %Y') if restaurant.created_at else 'Unknown' }}</div></td>
+                    <td>
+                        <a href="/superadmin/restaurant-detail?id={{ restaurant.id }}" class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;">Manage</a>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" style="text-align: center; padding: 24px; color: var(--text-secondary);">
+                        No restaurants onboarded in the last 30 days.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function loadDashboardChart() {
+    try {
+        const res = await fetch('/superadmin/api/dashboard-chart');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const labels = data.labels;
+        const callVol = data.call_volume;
+        const n = labels.length;
+        const maxVal = Math.max(...callVol, 1);
+
+        const svgW = 800;
+        const svgH = 200;
+        const padL = 10, padR = 10, padT = 10, padB = 10;
+        const chartW = svgW - padL - padR;
+        const chartH = svgH - padT - padB;
+        const stepX = n > 1 ? chartW / (n - 1) : chartW;
+
+        let pathD = '';
+        let points = '';
+        callVol.forEach((val, i) => {
+            const cx = padL + i * stepX;
+            const cy = svgH - padB - (val / maxVal) * chartH;
+            pathD += (i === 0 ? `M ${cx} ${cy}` : ` L ${cx} ${cy}`);
+            points += `<circle cx="${cx}" cy="${cy}" r="4" fill="var(--primary)"/>`;
+        });
+
+        document.getElementById('dash-call-path').setAttribute('d', pathD);
+        document.getElementById('dash-points').innerHTML = points;
+        document.getElementById('dash-y-max').textContent = maxVal;
+        document.getElementById('dash-y-mid').textContent = Math.round(maxVal / 2);
+        document.getElementById('dash-x-labels').innerHTML = labels.map(l => `<span>${l}</span>`).join('');
+    } catch(e) {
+        console.error('Dashboard chart error:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadDashboardChart);
+</script>
+{% endblock %}

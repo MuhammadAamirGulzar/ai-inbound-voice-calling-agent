@@ -1,0 +1,83 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-restaurants' %}
+
+{% block title %}Manage Restaurants - Super Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Manage Restaurants</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            View and manage all restaurants onboarded to the OrderSaathi platform.
+        </div>
+    </div>
+    <div style="display: flex; gap: 12px;">
+        <a href="/superadmin/create-restaurant" class="btn btn-primary" style="display: inline-flex; align-items: center; justify-content: center; height: 38px;"><i class="fa-solid fa-plus mr-2"></i>Onboard New Restaurant</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Restaurant Details</th>
+                    <th>Primary Contact</th>
+                    <th>Plan Tier</th>
+                    <th>Order Phone Number</th>
+                    <th>Date Onboarded</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if not restaurants %}
+                <tr>
+                    <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">
+                        <i class="fa-solid fa-store-slash" style="font-size: 32px; margin-bottom: 12px; display: block;"></i>
+                        No restaurants onboarded yet.
+                    </td>
+                </tr>
+                {% else %}
+                    {% for r in restaurants %}
+                    <tr>
+                        <td>
+                            <div class="font-semibold" style="color: var(--text-primary);">{{ r.name }}</div>
+                            {% if r.description %}
+                            <div style="font-size: 12px; color: var(--text-secondary);">{{ r.description }}</div>
+                            {% endif %}
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">ID: ORG-00{{ r.id }}</div>
+                        </td>
+                        <td>
+                            <div style="font-size: 13px; font-weight: 500;">{{ r.admin.email if r.admin else 'No Email' }}</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">{{ r.mobile_number }}</div>
+                        </td>
+                        <td>
+                            <span style="font-size: 13px; font-weight: 600; text-transform: capitalize; color: var(--primary);">
+                                {% if r.is_free_plan or r.subscription_plan == 'free_trial' %}
+                                Free Trial
+                                {% elif r.subscription_plan == 'six_monthly' %}
+                                6 Monthly
+                                {% else %}
+                                {{ r.subscription_plan }}
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td>
+                            <span style="font-size: 13px; font-weight: 500; font-family: monospace;">{{ r.order_phone_number }}</span>
+                        </td>
+                        <td>
+                            <div style="font-size: 13px; font-weight: 500;">
+                                {{ r.created_at.strftime('%b %d, %Y') if r.created_at else '' }}
+                            </div>
+                        </td>
+                        <td>
+                            <a href="/superadmin/restaurant-detail?id={{ r.id }}" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">Manage <i class="fa-solid fa-arrow-right" style="margin-left: 6px;"></i></a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

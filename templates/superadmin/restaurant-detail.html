@@ -1,0 +1,448 @@
+{% extends "superadmin/base.html" %}
+{% set active_page = 'super-restaurants' %}
+
+{% block title %}Manage Restaurant - {{ restaurant.name }} - Super Admin{% endblock %}
+
+{% block content %}
+<style>
+    @keyframes modalFadeIn {
+        from { opacity: 0; transform: translateY(-20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .modal-backdrop {
+        display: none; 
+        position: fixed; 
+        top: 0; left: 0; 
+        width: 100%; height: 100%; 
+        background: rgba(0, 0, 0, 0.7); 
+        z-index: 1000; 
+        align-items: center; 
+        justify-content: center; 
+        backdrop-filter: blur(4px);
+    }
+    .modal-card {
+        background: #ffffff;
+        color: #1e293b;
+        border: 1px solid var(--border, rgba(255,255,255,0.08));
+        border-radius: 12px;
+        width: 100%;
+        max-width: 450px;
+        margin: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        animation: modalFadeIn 0.2s ease-out;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        color: #475569;
+        font-weight: 500;
+    }
+</style>
+
+<div class="page-header">
+    <div>
+        <a href="/superadmin/restaurants" class="link" style="font-size: 13px; display: inline-flex; align-items: center; margin-bottom: 12px;">
+            <i class="fa-solid fa-arrow-left mr-2"></i>Back to Restaurants
+        </a>
+        <h1 class="page-title">{{ restaurant.name }}</h1>
+        <div style="font-size: 14px; color: var(--text-secondary);">
+            Tenant Scoped Configuration, Analytics, and Administrative Actions.
+        </div>
+    </div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        {% if restaurant.is_suspended %}
+        <span class="badge" style="background-color: rgba(244, 63, 94, 0.15); color: var(--danger); border: 1px solid var(--danger); font-size: 13px; padding: 6px 14px; border-radius: 6px;">Suspended</span>
+        {% else %}
+        <span class="badge" style="background-color: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid var(--success); font-size: 13px; padding: 6px 14px; border-radius: 6px;">Active</span>
+        {% endif %}
+        
+        {% if restaurant.is_free_plan %}
+        <span class="badge" style="background-color: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid #eab308; font-size: 13px; padding: 6px 14px; border-radius: 6px;">
+            Free Trial (Exp: {{ restaurant.trial_expiration_date.strftime('%Y-%m-%d') if restaurant.trial_expiration_date else 'No Date' }})
+        </span>
+        {% else %}
+        <span class="badge" style="background-color: var(--primary-light); color: var(--primary); font-size: 13px; padding: 6px 14px; text-transform: capitalize; border: 1px solid var(--primary); border-radius: 6px;">{{ restaurant.subscription_plan }} Plan</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="detail-layout" style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+    <!-- Left Column: Business Details -->
+    <div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">General Restaurant Profile</div>
+            </div>
+            <div class="card-body">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
+                    <div>
+                        <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">RESTAURANT NAME</span>
+                        <div class="font-bold" style="color: var(--text-primary); margin-top: 4px; font-size: 15px;">{{ restaurant.name }}</div>
+                    </div>
+                    <div>
+                        <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">ORGANIZATION ID</span>
+                        <div class="font-bold" style="color: var(--text-primary); margin-top: 4px; font-size: 15px;">ORG-00{{ restaurant.id }}</div>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
+                    <div>
+                        <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">PRIMARY OWNER EMAIL</span>
+                        <div class="font-bold" style="color: var(--text-primary); margin-top: 4px; font-size: 15px;">{{ restaurant.admin.email if restaurant.admin else 'No Email' }}</div>
+                    </div>
+                    <div>
+                        <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">CONTACT MOBILE</span>
+                        <div class="font-bold" style="color: var(--text-primary); margin-top: 4px; font-size: 15px;">{{ restaurant.mobile_number }}</div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 24px;">
+                    <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">PRIMARY ADMIN NAME</span>
+                    <div class="font-bold" style="color: var(--text-primary); margin-top: 4px; font-size: 15px;">{{ restaurant.admin.name if restaurant.admin else 'No Admin Assigned' }}</div>
+                </div>
+                
+                {% if restaurant.description %}
+                <div style="margin-bottom: 24px;">
+                    <span class="metadata-label" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">DESCRIPTION</span>
+                    <div class="font-bold" style="color: var(--text-primary); margin-top: 4px; font-size: 15px;">{{ restaurant.description }}</div>
+                </div>
+                {% endif %}
+
+                <div style="background-color: var(--background); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">Assigned Twilio Phone Number</div>
+                        <div class="font-bold" style="font-size: 18px; color: var(--primary); margin-top: 4px;">{{ restaurant.order_phone_number }}</div>
+                    </div>
+                    <button onclick="alert('SIP trunk mapping verified')" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;"><i class="fa-solid fa-square-rss mr-2"></i>Test SIP Link</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Telephony Usage Tracker -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Call Usage Tracker (This Billing Cycle)</div>
+            </div>
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Telephony Minutes:</span>
+                    <span style="font-size: 14px; font-weight: 700; color: var(--text-primary);">{{ "%.1f"|format(restaurant.used_minutes) }} / {{ restaurant.assigned_minutes }} Mins ({{ used_percentage }}% Used)</span>
+                </div>
+                <div class="progress-bar-container" style="height: 12px; margin-bottom: 20px;">
+                    <div class="progress-bar-fill" style="width: {{ used_percentage }}%; {% if restaurant.is_suspended %}background-color: #ef4444;{% endif %}"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Quick Administrative Controls -->
+    <div>
+        <div class="card" style="border-top: 4px solid var(--primary);">
+            <div class="card-header">
+                <div class="card-title">Tenant Administrative Actions</div>
+            </div>
+            <div class="card-body" style="display: flex; flex-direction: column; gap: 12px;">
+                <button onclick="resetPasswordConfirm()" class="btn btn-secondary" style="justify-content: center;"><i class="fa-solid fa-key mr-2"></i>Reset Owner Password</button>
+                <button onclick="openPlanModal()" class="btn btn-secondary" style="justify-content: center;"><i class="fa-solid fa-credit-card mr-2"></i>Change Subscription Plan</button>
+                <button onclick="openTrialModal()" class="btn btn-secondary" style="justify-content: center;" {% if not restaurant.is_free_plan %}disabled title="Tenant must be on free trial to extend it"{% endif %}><i class="fa-solid fa-hourglass-half mr-2"></i>Extend Free Trial</button>
+                <button onclick="openQuotaModal()" class="btn btn-secondary" style="justify-content: center;"><i class="fa-solid fa-clock mr-2"></i>Adjust Quotas / Minutes</button>
+                
+                <hr style="border: 0; border-top: 1px solid var(--border); margin: 8px 0;">
+                
+                {% if restaurant.is_suspended %}
+                <button onclick="suspendConfirm(false)" class="btn btn-primary" style="justify-content: center; background-color: var(--success); border-color: var(--success); color: white;"><i class="fa-solid fa-circle-check mr-2"></i>Activate Tenant</button>
+                {% else %}
+                <button onclick="suspendConfirm(true)" class="btn btn-danger" style="justify-content: center; background-color: #ef4444; border-color: #ef4444; color: white;"><i class="fa-solid fa-ban mr-2"></i>Suspend Tenant</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Beautiful Modal Backdrop -->
+<div id="action-modal" class="modal-backdrop">
+    <div class="modal-card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
+            <div class="card-title" id="modal-title" style="margin: 0; font-size: 16px;">Action Title</div>
+            <button onclick="closeModal()" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 18px; padding: 0;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="card-body" style="padding: 20px;">
+            <!-- Plan Change Modal Content -->
+            <div id="modal-content-plan" style="display: none;">
+                <form id="plan-form" onsubmit="handlePlanSubmit(event)">
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="modal_plan_selection">Select Plan</label>
+                        <select class="form-control" id="modal_plan_selection" required>
+                            <option value="monthly" {% if restaurant.subscription_plan == 'monthly' %}selected{% endif %}>Monthly</option>
+                            <option value="six_monthly" {% if restaurant.subscription_plan == 'six_monthly' %}selected{% endif %}>6 Monthly</option>
+                            <option value="annually" {% if restaurant.subscription_plan == 'annually' %}selected{% endif %}>Annually</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 20px; display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="modal_is_free_plan" {% if restaurant.is_free_plan %}checked{% endif %} style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);">
+                        <label for="modal_is_free_plan" style="font-size: 13px; color: var(--text-secondary); cursor: pointer; margin-bottom: 0; user-select: none;">Enable Free Trial (2 Weeks)</label>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button type="button" onclick="closeModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="height: 38px;">Update Plan</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Calendar Free Trial Extension Modal Content -->
+            <div id="modal-content-trial" style="display: none;">
+                <form id="trial-form" onsubmit="handleTrialSubmit(event)">
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="trial_expiration_date_picker">Select Trial Expiration Date</label>
+                        <input class="form-control" type="date" id="trial_expiration_date_picker" required>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button type="button" onclick="closeModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="height: 38px;">Extend Trial</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Password Reset Credential Showing Modal Content -->
+            <div id="modal-content-creds" style="display: none;">
+                <p style="font-size: 13px; color: #475569; margin-bottom: 16px;">The owner will be forced to reset this password on their next login attempt.</p>
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px; font-family: monospace; font-size: 14px; text-align: center;">
+                    <strong style="color: #64748b; font-size: 11px;">NEW TEMPORARY PASSWORD</strong>
+                    <div style="color: var(--primary); font-size: 20px; margin-top: 8px; font-weight: bold; background: rgba(0, 0, 0, 0.04); padding: 8px 12px; border-radius: 4px; letter-spacing: 1px;" id="new-temp-password">--</div>
+                </div>
+                <div style="display: flex; justify-content: flex-end;">
+                    <button type="button" onclick="closeModal()" class="btn btn-primary" style="height: 38px;">Done</button>
+                </div>
+            </div>
+
+            <!-- Confirm Reset Password -->
+            <div id="modal-content-confirm-reset" style="display: none;">
+                <p style="font-size: 14px; color: #334155; margin-bottom: 20px;">Are you sure you want to reset the temporary password for <strong>{{ restaurant.name }}</strong>? This will generate a random secure key, set password forced change requirement, and display the key to you.</p>
+                <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                    <button type="button" onclick="closeModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                    <button type="button" onclick="resetPassword()" class="btn btn-primary" style="height: 38px;">Yes, Reset Password</button>
+                </div>
+            </div>
+
+            <!-- Confirm Suspend/Activate -->
+            <div id="modal-content-confirm-suspend" style="display: none;">
+                <p style="font-size: 14px; color: #334155; margin-bottom: 20px;" id="suspend-confirm-text"></p>
+                <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                    <button type="button" onclick="closeModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                    <button type="button" id="suspend-confirm-btn" class="btn btn-danger" style="height: 38px;">Confirm</button>
+                </div>
+            </div>
+
+            <!-- Adjust Quotas Modal Content -->
+            <div id="modal-content-quota" style="display: none;">
+                <form id="quota-adjustment-form" onsubmit="handleQuotaSubmit(event)">
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="modal_assigned_minutes">Assigned Minutes Limit</label>
+                        <input class="form-control" type="number" id="modal_assigned_minutes" value="{{ restaurant.assigned_minutes }}" required min="1">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="modal_used_minutes">Used Minutes</label>
+                        <input class="form-control" type="number" step="0.1" id="modal_used_minutes" value="{{ restaurant.used_minutes }}" required min="0">
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button type="button" onclick="closeModal()" class="btn btn-secondary" style="height: 38px;">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="height: 38px;">Save Quotas</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    function hideAllModalContents() {
+        document.getElementById('modal-content-plan').style.display = 'none';
+        document.getElementById('modal-content-trial').style.display = 'none';
+        document.getElementById('modal-content-creds').style.display = 'none';
+        document.getElementById('modal-content-confirm-reset').style.display = 'none';
+        document.getElementById('modal-content-confirm-suspend').style.display = 'none';
+        document.getElementById('modal-content-quota').style.display = 'none';
+    }
+
+    function openPlanModal() {
+        document.getElementById('modal-title').textContent = "Change Subscription Plan";
+        hideAllModalContents();
+        document.getElementById('modal-content-plan').style.display = 'block';
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function openTrialModal() {
+        document.getElementById('modal-title').textContent = "Extend Free Trial";
+        hideAllModalContents();
+        document.getElementById('modal-content-trial').style.display = 'block';
+        
+        // Ensure strictly future dates are selectable
+        const today = new Date();
+        const yyyy_today = today.getFullYear();
+        const mm_today = String(today.getMonth() + 1).padStart(2, '0');
+        const dd_today = String(today.getDate()).padStart(2, '0');
+        document.getElementById('trial_expiration_date_picker').min = `${yyyy_today}-${mm_today}-${dd_today}`;
+        
+        // Prefill date if present
+        const currentExp = "{{ restaurant.trial_expiration_date.strftime('%Y-%m-%d') if restaurant.trial_expiration_date else '' }}";
+        if (currentExp) {
+            document.getElementById('trial_expiration_date_picker').value = currentExp;
+        } else {
+            // Default to today plus 14 days
+            const target = new Date();
+            target.setDate(target.getDate() + 14);
+            const yyyy = target.getFullYear();
+            const mm = String(target.getMonth() + 1).padStart(2, '0');
+            const dd = String(target.getDate()).padStart(2, '0');
+            document.getElementById('trial_expiration_date_picker').value = `${yyyy}-${mm}-${dd}`;
+        }
+        
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('action-modal').style.display = 'none';
+    }
+
+    function resetPasswordConfirm() {
+        document.getElementById('modal-title').textContent = "Reset Password";
+        hideAllModalContents();
+        document.getElementById('modal-content-confirm-reset').style.display = 'block';
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function suspendConfirm(shouldSuspend) {
+        const action = shouldSuspend ? "suspend" : "activate";
+        document.getElementById('modal-title').textContent = shouldSuspend ? "Suspend Tenant" : "Activate Tenant";
+        document.getElementById('suspend-confirm-text').textContent = `Are you sure you want to ${action} {{ restaurant.name }}? This will modify login access for the restaurant admins.`;
+        
+        const confirmBtn = document.getElementById('suspend-confirm-btn');
+        confirmBtn.className = shouldSuspend ? "btn btn-danger" : "btn btn-primary";
+        if (shouldSuspend) {
+            confirmBtn.style.backgroundColor = "#ef4444";
+            confirmBtn.style.borderColor = "#ef4444";
+            confirmBtn.style.color = "white";
+        } else {
+            confirmBtn.style.backgroundColor = "var(--success)";
+            confirmBtn.style.borderColor = "var(--success)";
+            confirmBtn.style.color = "white";
+        }
+        confirmBtn.textContent = shouldSuspend ? "Yes, Suspend" : "Yes, Activate";
+        confirmBtn.onclick = function() { toggleSuspension(shouldSuspend); };
+
+        hideAllModalContents();
+        document.getElementById('modal-content-confirm-suspend').style.display = 'block';
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function resetPassword() {
+        fetch("/superadmin/restaurants/{{ restaurant.id }}/reset-password", {
+            method: "POST"
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to reset password");
+            return data;
+        })
+        .then(data => {
+            document.getElementById('modal-title').textContent = "Password Reset Successful";
+            document.getElementById('new-temp-password').textContent = data.password;
+            hideAllModalContents();
+            document.getElementById('modal-content-creds').style.display = 'block';
+            document.getElementById('action-modal').style.display = 'flex';
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function handlePlanSubmit(event) {
+        event.preventDefault();
+        const plan = document.getElementById('modal_plan_selection').value;
+        const isFree = document.getElementById('modal_is_free_plan').checked;
+        
+        fetch("/superadmin/restaurants/{{ restaurant.id }}/change-plan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subscription_plan: plan, is_free_plan: isFree })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to update plan");
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function handleTrialSubmit(event) {
+        event.preventDefault();
+        const expDate = document.getElementById('trial_expiration_date_picker').value;
+        
+        fetch("/superadmin/restaurants/{{ restaurant.id }}/extend-trial", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trial_expiration_date: expDate })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to extend trial");
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function openQuotaModal() {
+        document.getElementById('modal-title').textContent = "Adjust Quotas & Minutes";
+        hideAllModalContents();
+        document.getElementById('modal-content-quota').style.display = 'block';
+        document.getElementById('action-modal').style.display = 'flex';
+    }
+
+    function handleQuotaSubmit(event) {
+        event.preventDefault();
+        const assigned = parseInt(document.getElementById('modal_assigned_minutes').value);
+        const used = parseFloat(document.getElementById('modal_used_minutes').value);
+        
+        fetch("/superadmin/restaurants/{{ restaurant.id }}/adjust-quota", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ assigned_minutes: assigned, used_minutes: used })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to adjust quotas");
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function toggleSuspension(shouldSuspend) {
+        const action = shouldSuspend ? "suspend" : "activate";
+        fetch("/superadmin/restaurants/{{ restaurant.id }}/toggle-suspension", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_suspended: shouldSuspend })
+        })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `Failed to ${action} tenant`);
+            location.reload();
+        })
+        .catch(err => alert(err.message));
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const freePlanCheckbox = document.getElementById("modal_is_free_plan");
+        const planSelection = document.getElementById("modal_plan_selection");
+        
+        if (freePlanCheckbox && planSelection) {
+            function togglePlanSelection() {
+                planSelection.disabled = freePlanCheckbox.checked;
+            }
+            freePlanCheckbox.addEventListener("change", togglePlanSelection);
+            togglePlanSelection(); // initial state
+        }
+    });
+</script>
+{% endblock %}
+{% endblock %}

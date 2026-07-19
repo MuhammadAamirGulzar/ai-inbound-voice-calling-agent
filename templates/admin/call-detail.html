@@ -1,0 +1,188 @@
+{% extends "admin/base.html" %}
+{% set active_page = 'call-detail' %}
+
+{% block title %}Call Details - OrderSaathi{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display: flex; align-items: center; gap: 12px;">
+        <a href="/admin/call-history" class="btn btn-secondary" style="padding: 8px 12px;"><i class="fa-solid fa-arrow-left"></i> Back</a>
+        <h1 class="page-title" style="margin: 0;">Call Record Details</h1>
+    </div>
+    <div>
+        <span class="badge {% if call.status.lower() == 'completed' %}badge-success{% elif call.status.lower() == 'missed' %}badge-danger{% elif call.status.lower() == 'in_progress' %}badge-warning{% else %}badge-danger{% endif %}" style="font-size: 14px; padding: 6px 14px;">
+            {% if call.status.lower() == 'completed' %}
+                <i class="fa-solid fa-circle-check mr-2"></i>Completed
+            {% elif call.status.lower() == 'missed' %}
+                <i class="fa-solid fa-phone-slash mr-2"></i>Missed
+            {% elif call.status.lower() == 'in_progress' %}
+                <i class="fa-solid fa-clock mr-2"></i>In Progress
+            {% else %}
+                <i class="fa-solid fa-triangle-exclamation mr-2"></i>{{ call.status.title() }}
+            {% endif %}
+        </span>
+    </div>
+</div>
+
+<!-- Two Column Detail Layout -->
+<div class="detail-layout">
+    <!-- Left Pane: Metadata, Audio and Order Summary -->
+    <div>
+        <!-- Metadata -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Call Information</div>
+            </div>
+            <div class="card-body">
+                <div class="metadata-grid">
+                    <div class="metadata-item">
+                        <div class="metadata-label">Caller Phone</div>
+                        <div class="metadata-value">{{ call.caller_number or 'Unknown' }}</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="metadata-label">Date & Time</div>
+                        <div class="metadata-value">{{ call.timestamp | pk_time("%B %d, %Y %I:%M %p") if call.timestamp else '-' }}</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="metadata-label">Call Duration</div>
+                        <div class="metadata-value">{{ duration_str }}</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="metadata-label">Language Used</div>
+                        <div class="metadata-value">Urdu/Roman Urdu</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audio Player -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Recording Playback</div>
+            </div>
+            <div class="card-body">
+                <div class="audio-player">
+                    <button class="audio-play-btn" id="play-button">
+                        <i class="fa-solid fa-play" id="play-icon"></i>
+                    </button>
+                    <div class="audio-scrubber-container">
+                        <div class="audio-scrubber" id="scrubber">
+                            <div class="audio-progress" id="progress-bar" style="width: 0%;"></div>
+                        </div>
+                        <div class="audio-time">
+                            <span id="current-time">0:00</span>
+                            <span>{{ duration_str }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size: 11px; color: var(--text-secondary); text-align: center; margin-top: 8px;">
+                    <i class="fa-solid fa-circle-info"></i> Recording capture is disabled. Playing simulated timeline.
+                </div>
+            </div>
+        </div>
+
+        <!-- Linked Order Summary Card -->
+        {% if order %}
+        <div class="card" style="border: 2px solid var(--primary-light);">
+            <div class="card-header" style="background-color: var(--primary-light);">
+                <div class="card-title" style="color: var(--primary);"><i class="fa-solid fa-receipt mr-2"></i>Resulting Order Booked</div>
+            </div>
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                    <div>
+                        <div class="font-semibold" style="font-size: 16px; color: var(--text-primary);">Order #{{ order.id }}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;">
+                            {% if order.items_summary is iterable %}
+                                {% if order.items_summary is mapping %}
+                                    {% for k, v in order.items_summary.items() %}{{ v }}x {{ k }}{% if not loop.last %}, {% endif %}{% endfor %}
+                                {% else %}
+                                    {% for item in order.items_summary %}{{ item.qty }}x {{ item.item }}{% if not loop.last %}, {% endif %}{% endfor %}
+                                {% endif %}
+                            {% else %}
+                                {{ order.items_summary }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 18px; font-weight: 700; color: var(--text-primary);">PKR {{ "{:,.0f}".format(order.total_price) }}</div>
+                        <span class="badge {% if order.status.lower() == 'confirmed' %}badge-success{% elif order.status.lower() == 'pending' %}badge-warning{% else %}badge-danger{% endif %}" style="font-size: 11px; padding: 2px 8px; margin-top: 4px;">{{ order.status.title() }}</span>
+                    </div>
+                </div>
+                <a href="/admin/order-detail?id={{ order.id }}" class="btn btn-primary btn-block"><i class="fa-solid fa-receipt mr-2"></i>View Order Details</a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right Pane: Transcript Viewer -->
+    <div>
+        <div class="card" style="height: 100%;">
+            <div class="card-header">
+                <div class="card-title"><i class="fa-solid fa-comments mr-2" style="color: var(--primary);"></i>Conversation Transcript</div>
+            </div>
+            <div class="card-body" style="padding: 16px;">
+                <div class="transcript-container" id="transcript">
+                    {% if call.chat_data %}
+                        {% for msg in call.chat_data %}
+                        {% if msg.role != 'system' %}
+                        <div class="chat-bubble {% if msg.role == 'assistant' %}agent{% else %}caller{% endif %}">
+                            {{ msg.content }}
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        <div style="text-align: center; color: var(--text-secondary); padding: 40px 0;">
+                            <i class="fa-solid fa-comments-slash" style="font-size: 32px; color: var(--border); margin-bottom: 12px; display: block;"></i>
+                            No conversation turns recorded for this call.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    const playButton = document.getElementById('play-button');
+    if (playButton) {
+        const playIcon = document.getElementById('play-icon');
+        const progressBar = document.getElementById('progress-bar');
+        const currentTimeEl = document.getElementById('current-time');
+        
+        let isPlaying = false;
+        let progress = 0;
+        let timer;
+        const totalDuration = {{ call.duration_seconds or 105 }};
+
+        playButton.addEventListener('click', () => {
+            if (isPlaying) {
+                clearInterval(timer);
+                playIcon.className = 'fa-solid fa-play';
+                isPlaying = false;
+            } else {
+                playIcon.className = 'fa-solid fa-pause';
+                isPlaying = true;
+                timer = setInterval(() => {
+                    progress += 1;
+                    if (progress > 100) {
+                        progress = 0;
+                        clearInterval(timer);
+                        playIcon.className = 'fa-solid fa-play';
+                        isPlaying = false;
+                    }
+                    if (progressBar) progressBar.style.width = progress + '%';
+                    
+                    if (currentTimeEl) {
+                        let totalSecs = Math.floor((progress / 100) * totalDuration);
+                        let mins = Math.floor(totalSecs / 60);
+                        let secs = totalSecs % 60;
+                        currentTimeEl.textContent = `${mins}:${secs < 10 ? '0' + secs : secs}`;
+                    }
+                }, 100);
+            }
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}
