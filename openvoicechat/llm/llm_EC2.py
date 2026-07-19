@@ -3,13 +3,13 @@ if __name__ == "__main__":
     import sys
     import os
 
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from Minibot import Minibot
     from constants import FILLERS
 else:
     from .base import BaseChatbot
-    from Minibot import Minibot
-    from constants import FILLERS
+    from ..Minibot import Minibot
+    from ..constants import FILLERS
 
 import os
 import json
