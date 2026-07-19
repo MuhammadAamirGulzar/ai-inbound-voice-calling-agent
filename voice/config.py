@@ -34,6 +34,9 @@ class VoiceConfig:
 
     # ── Credentials / endpoints ──────────────────────────────────────────
     deepgram_api_key: str = ""
+    # Optional separate key for Aura TTS (per-service usage tracking);
+    # falls back to deepgram_api_key when unset.
+    deepgram_tts_api_key: str = ""
     elevenlabs_api_key: str = ""
     llm_api_key: str = ""
     llm_base_url: str = "https://api.groq.com/openai/v1"
@@ -52,7 +55,7 @@ class VoiceConfig:
     stt_keywords: str = ""  # comma-separated boost terms (menu items, names)
 
     # ── TTS tuning ───────────────────────────────────────────────────────
-    tts_voice: str = "aura-2-thalia-en"       # Deepgram Aura voice
+    tts_voice: str = "aura-asteria-en"        # aura-1: ~3x lower TTFB than aura-2 (measured)
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     elevenlabs_model: str = "eleven_flash_v2_5"   # lowest-latency EL model
 
@@ -73,7 +76,9 @@ class VoiceConfig:
     system_prompt: str = "You are a helpful restaurant voice assistant."
     greeting: str = "Hello! How can I help you today?"
     llm_max_tokens: int = 256
-    llm_temperature: float = 0.3
+    # Low temperature: order-taking needs consistency, and tool-call
+    # decisions get flaky above ~0.3 (measured with tools/tool_discipline_eval).
+    llm_temperature: float = 0.2
     # Total time budget for RAG context lookups on the hot path.
     rag_timeout_s: float = 1.5
     rag_base_url: str = "http://127.0.0.1:8001"
@@ -92,6 +97,7 @@ class VoiceConfig:
     def from_env(cls) -> "VoiceConfig":
         cfg = cls(
             deepgram_api_key=_env("DEEPGRAM_API_KEY"),
+            deepgram_tts_api_key=_env("DEEPGRAM_TTS_API_KEY"),
             elevenlabs_api_key=_env("ELEVENLABS_API_KEY"),
             llm_api_key=_env("GROQ_API_KEY") or _env("LLM_API_KEY") or _env("MODEL_API_KEY"),
             llm_base_url=_env("LLM_BASE_URL") or _env("MODEL_ENDPOINT_URL") or "https://api.groq.com/openai/v1",
@@ -99,7 +105,7 @@ class VoiceConfig:
             stt_model=_env("STT_MODEL", "nova-3"),
             stt_language=_env("STT_LANGUAGE", "multi"),
             tts_provider=_env("TTS_PROVIDER", "deepgram"),
-            tts_voice=_env("TTS_VOICE", "aura-2-thalia-en"),
+            tts_voice=_env("TTS_VOICE", "aura-asteria-en"),
             elevenlabs_voice_id=_env("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
             transfer_number=_env("TRANSFER_NUMBER"),
             public_base_url=_env("PUBLIC_BASE_URL").rstrip("/"),

@@ -313,7 +313,7 @@ def test_tts_failure_falls_back_to_secondary():
     assert not session.metrics.turns[0].error
 
 
-def test_user_speech_while_responding_is_queued():
+def test_user_speech_while_responding_is_answered_after():
     async def scenario():
         transport = FakeTransport()
         session = make_session(
@@ -324,10 +324,15 @@ def test_user_speech_while_responding_is_queued():
         session._pending_finals = ["and also"]
         session._close_user_turn()          # arrives mid-response
         await task
+        # the queued turn is answered right after the current one finishes
+        if session._respond_task and not session._respond_task.done():
+            await session._respond_task
         return session
 
     session = asyncio.run(scenario())
-    assert session._queued_user_text == "and also"
+    assert session._queued_user_text == ""
+    assert len(session.metrics.turns) == 2
+    assert session.metrics.turns[1].user_text == "and also"
 
 
 if __name__ == "__main__":
@@ -389,3 +394,28 @@ def test_word_error_rate():
     assert word_error_rate("Hello, there!", "hello there") == 0.0
     # insertion counts against hypothesis
     assert word_error_rate("hello there", "well hello there") == 0.5
+
+
+def test_barge_in_during_buffered_playback():
+    """Respond task finished, audio still playing from the buffer:
+    interruption must still clear and rewrite history."""
+    async def scenario():
+        from voice.stt import STTEvent
+        transport = FakeTransport()
+        session = make_session(transport)
+        await session._respond("tell me the menu")   # completes fully
+        assert session.state == "listening"
+        # only the first of two sentences was actually played
+        session.on_mark(transport.marks[0])
+        session._maybe_barge_in(STTEvent(kind="interim", text="wait stop"))
+        await asyncio.sleep(0.05)
+        return transport, session
+
+    transport, session = asyncio.run(scenario())
+    assert transport.clears == 1
+    assert session.metrics.turns[0].barged_in
+    assistant = [m for m in session.messages if m["role"] == "assistant"]
+    assert len(assistant) == 1
+    assert assistant[0]["content"].endswith("—")
+    # a second interruption must not re-fire (nothing left unplayed)
+    assert not session._agent_audibly_speaking()

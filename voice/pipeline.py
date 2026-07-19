@@ -131,6 +131,13 @@ class CallSession:
         """Main loop; returns when the call is over."""
         started = time.monotonic()
         telemetry.call_started()
+        # Greeting synthesis and the STT socket connect are independent
+        # cold starts — run them concurrently so the caller hears audio
+        # as early as possible.
+        watchdog = asyncio.create_task(self._watchdog())
+        if hasattr(self.tts, "prewarm"):
+            asyncio.create_task(self.tts.prewarm())
+        greeting = asyncio.create_task(self._speak_greeting(started))
         try:
             await self.stt.start()
         except Exception:
@@ -141,11 +148,12 @@ class CallSession:
             except Exception:
                 self.metrics.disconnect_reason = "stt_connect_failed"
                 telemetry.provider_error("stt")
+                greeting.cancel()
+                watchdog.cancel()
                 self.ended.set()
                 return
-
-        watchdog = asyncio.create_task(self._watchdog())
-        greeting = asyncio.create_task(self._speak_greeting(started))
+        self.metrics.stt_connect_ms = round(
+            (time.monotonic() - started) * 1000.0, 1)
 
         try:
             while not self.ended.is_set():
@@ -214,9 +222,18 @@ class CallSession:
             self._queued_user_text = ""
         self._respond_task = asyncio.create_task(self._respond(user_text))
 
+    def _agent_audibly_speaking(self) -> bool:
+        """
+        True while the caller can still hear the agent. The respond task
+        often finishes seconds before playback does — Twilio buffers the
+        whole reply — so "speaking" means unplayed sentences are queued
+        (marks not yet echoed), not that a task is running.
+        """
+        return (self.state == "responding"
+                or self._played_marks < len(self._spoken_sentences))
+
     def _maybe_barge_in(self, event: STTEvent):
-        if (self.state != "responding"
-                or not self.config.barge_in_enabled):
+        if not self.config.barge_in_enabled or not self._agent_audibly_speaking():
             return
         if event.kind in ("interim", "final"):
             text = re.sub(r"[^\w\s]", "", event.text).strip().lower()
@@ -227,31 +244,43 @@ class CallSession:
         asyncio.create_task(self._barge_in())
 
     async def _barge_in(self):
-        if self.state != "responding":
+        mid_response = self.state == "responding"
+        if not self._agent_audibly_speaking():
             return
         self.state = "listening"
-        if self._respond_task and not self._respond_task.done():
+        if mid_response and self._respond_task and not self._respond_task.done():
             self._respond_task.cancel()
         # Snapshot BEFORE clearing: Twilio may flush queued marks on clear,
         # which must not count as "the caller heard this". Turn flags are
         # set before the first await so the cancelled respond task's
         # cleanup never records the turn without them.
         played = self._spoken_sentences[:self._played_marks]
+        queued_count = len(self._spoken_sentences)
+        # Stop counting this reply as "audibly speaking" from now on.
+        self._spoken_sentences = played
+        self._played_marks = len(played)
         if self.metrics.turns:
             turn = self.metrics.turns[-1]
             turn.barged_in = True
             turn.agent_text = " ".join(played)
+        truncated = (" ".join(played) + " —") if played else ""
+        if mid_response:
+            # Task cancelled before it appended its reply to history.
+            if truncated:
+                self.messages.append({"role": "assistant", "content": truncated})
+        else:
+            # Reply was fully generated and appended, but the caller only
+            # heard part of it: rewrite history to what was actually heard.
+            for message in reversed(self.messages):
+                if message["role"] == "assistant":
+                    message["content"] = truncated or message["content"]
+                    break
         try:
             await self.transport.send_clear()
         except Exception:
             pass
-        if played:
-            self.messages.append({
-                "role": "assistant",
-                "content": " ".join(played) + " —",  # em-dash: cut off mid-reply
-            })
-        print(f"[voice] barge-in: cleared playback after "
-              f"{self._played_marks}/{len(self._spoken_sentences)} sentences")
+        print(f"[voice] barge-in ({'mid-response' if mid_response else 'during playback'}): "
+              f"cleared after {len(played)}/{queued_count} sentences")
 
     # ── speaking ─────────────────────────────────────────────────────────
     async def _speak_greeting(self, session_start: float):
@@ -333,6 +362,7 @@ class CallSession:
         turn = self.metrics.new_turn(user_text, self.config.endpointing_ms)
         print(f"[voice] turn {turn.turn_index} user: {user_text!r}")
 
+        completed = False
         try:
             context = await build_rag_context(self.config, user_text)
             request_messages = self.messages + [
@@ -393,6 +423,7 @@ class CallSession:
                     await self._do_end_call(call.tool_args, seq)
 
             self.state = "listening"
+            completed = True
         except asyncio.CancelledError:
             # Barge-in path; _barge_in() owns state and history cleanup.
             raise
@@ -405,8 +436,17 @@ class CallSession:
             except Exception:
                 pass
             self.state = "listening"
+            completed = True
         finally:
             telemetry.record_turn(turn)
+            # A turn that closed while we were speaking (barge-in filtered
+            # or disabled) would otherwise sit queued forever: answer it
+            # now. Skipped on cancellation — the caller is still talking
+            # and their next endpoint will merge the queued text.
+            if completed and self._queued_user_text and not self.ended.is_set():
+                queued = self._queued_user_text
+                self._queued_user_text = ""
+                self._respond_task = asyncio.create_task(self._respond(queued))
 
     # ── call control ─────────────────────────────────────────────────────
     async def _do_transfer(self, args: dict, seq: int):

@@ -10,15 +10,39 @@ no context — never to a slow answer.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 
 _MENU_TOP_K = 3
 _CHUNK_TOP_K = 4
 
+# Circuit breaker: a down/hanging RAG service must not tax every turn.
+# (Measured: on Windows a refused localhost connect burns ~1.7 s — the
+# whole lookup budget — on every single turn until something gives.)
+_BREAKER_THRESHOLD = 2
+_BREAKER_COOLDOWN_S = 30.0
+_consecutive_failures = 0
+_skip_until = 0.0
+
+
+def rag_healthy() -> bool:
+    """False while the breaker is open (recent consecutive failures)."""
+    return time.monotonic() >= _skip_until
+
+
+def record_rag_result(ok: bool):
+    global _consecutive_failures, _skip_until
+    if ok:
+        _consecutive_failures = 0
+    else:
+        _consecutive_failures += 1
+        if _consecutive_failures >= _BREAKER_THRESHOLD:
+            _skip_until = time.monotonic() + _BREAKER_COOLDOWN_S
+
 
 async def build_rag_context(config, user_text: str) -> str:
-    if not config.rag_business_id:
+    if not config.rag_business_id or not rag_healthy():
         return ""
 
     async def menu_lookup(client: httpx.AsyncClient) -> str:
@@ -63,8 +87,11 @@ async def build_rag_context(config, user_text: str) -> str:
                                return_exceptions=True),
                 timeout=config.rag_timeout_s,
             )
+        # Service is "up" if at least one lookup came back at all.
+        record_rag_result(any(isinstance(r, str) for r in results))
         sections = [r for r in results if isinstance(r, str) and r]
     except (asyncio.TimeoutError, Exception):
+        record_rag_result(False)
         return ""
 
     if not sections:

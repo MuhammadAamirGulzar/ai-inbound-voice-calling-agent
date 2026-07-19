@@ -349,9 +349,9 @@ def print_report(results: list[CallResult], barge_in: bool):
         if barge_in:
             if res.barge_in_clear_ms is not None:
                 print(f"{label} barge-in: clear received after "
-                      f"{res.barge_in_clear_ms} ms  ✓")
+                      f"{res.barge_in_clear_ms} ms  [OK]")
             else:
-                print(f"{label} barge-in: NO clear received  ✗")
+                print(f"{label} barge-in: NO clear received  [FAIL]")
     if all_latencies:
         print("-" * 64)
         print(f"turns: {len(all_latencies)}   "

@@ -37,9 +37,11 @@ router = APIRouter()
 DEFAULT_SYSTEM_PROMPT = (
     "You are the friendly AI voice agent taking phone orders for a "
     "restaurant. Be extremely brief — under 30 words per reply. Collect "
-    "the caller's delivery address before concluding an order. Use the "
-    "transfer_call tool if the caller asks for a human or has a complaint; "
-    "use end_call once the conversation has clearly finished."
+    "the caller's delivery address before concluding an order. Answer "
+    "routine questions (menu, prices, delivery area, hours) yourself — "
+    "never transfer for those. Use the transfer_call tool ONLY if the "
+    "caller explicitly asks for a human or is complaining; use end_call "
+    "only once the caller has clearly finished."
 )
 
 
@@ -176,21 +178,24 @@ def _load_agent_settings(to_number: str) -> dict:
 async def _fetch_greeting(config: VoiceConfig, restaurant_name: str,
                           business_id: str) -> str:
     """Greeting from the RAG persona profile, with a sane default."""
+    from voice.rag import rag_healthy, record_rag_result
+
     default = (f"Hello! Thank you for calling {restaurant_name}. "
                f"What would you like to order today?"
                if restaurant_name else "Hello! How can I help you today?")
-    if not business_id:
+    if not business_id or not rag_healthy():
         return default
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx.AsyncClient(timeout=1.0) as client:
             r = await client.get(
                 f"{config.rag_base_url}/businesses/{business_id}/profile")
+        record_rag_result(True)
         if r.status_code == 200:
             persona = (r.json().get("persona") or {})
             if persona.get("greeting_script"):
                 return persona["greeting_script"]
     except Exception:
-        pass
+        record_rag_result(False)
     return default
 
 

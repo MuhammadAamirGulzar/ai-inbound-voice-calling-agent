@@ -20,7 +20,29 @@ import json
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
+import httpx
 from openai import AsyncOpenAI
+
+# One HTTP client per (endpoint, key) for the whole process. A per-call
+# client re-handshakes TLS on every turn: httpx's default keep-alive is
+# 5 s, and the caller talks longer than that between turns — measured as
+# +1.5-2.5 s of LLM TTFT on every single turn.
+_shared_clients: dict = {}
+
+
+def _get_client(base_url: str, api_key: str) -> AsyncOpenAI:
+    cache_key = (base_url, api_key)
+    if cache_key not in _shared_clients:
+        http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=100,
+                                max_keepalive_connections=20,
+                                keepalive_expiry=120.0),
+        )
+        _shared_clients[cache_key] = AsyncOpenAI(
+            base_url=base_url, api_key=api_key or "none",
+            http_client=http_client, timeout=30.0)
+    return _shared_clients[cache_key]
 
 CALL_TOOLS = [
     {
@@ -28,10 +50,13 @@ CALL_TOOLS = [
         "function": {
             "name": "transfer_call",
             "description": (
-                "Transfer the caller to a human staff member. Use when the "
-                "caller explicitly asks for a human, is upset, or has a "
-                "request you cannot handle (complaints, refunds, complex "
-                "changes to existing orders)."
+                "Transfer the caller to a human staff member. ONLY use when "
+                "the caller explicitly asks for a human, agent or manager, "
+                "or is angry / complaining about service, or demands a "
+                "refund. NEVER use this for ordinary business you handle "
+                "yourself: menu questions, prices, delivery areas or times, "
+                "opening hours, placing or confirming an order. When in "
+                "doubt, answer the caller yourself instead of transferring."
             ),
             "parameters": {
                 "type": "object",
@@ -48,9 +73,10 @@ CALL_TOOLS = [
         "function": {
             "name": "end_call",
             "description": (
-                "Hang up politely. Use only after the conversation has "
-                "clearly concluded (order confirmed and caller said goodbye, "
-                "or caller asked to end the call)."
+                "Hang up politely. ONLY use after the conversation has "
+                "clearly concluded: the order (if any) is confirmed with a "
+                "delivery address and the caller said goodbye or that they "
+                "are done. NEVER use it to avoid answering a question."
             ),
             "parameters": {
                 "type": "object",
@@ -75,11 +101,7 @@ class LLMEvent:
 class StreamingLLM:
     def __init__(self, config):
         self.config = config
-        self.client = AsyncOpenAI(
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key or "none",
-            timeout=30.0,
-        )
+        self.client = _get_client(config.llm_base_url, config.llm_api_key)
 
     async def stream_reply(self, messages: list[dict],
                            tools_enabled: bool = True) -> AsyncIterator[LLMEvent]:
