@@ -1,5 +1,7 @@
 # AI Inbound Voice Agent — Real-Time Restaurant Call Answering
 
+[![tests](https://github.com/MuhammadAamirGulzar/ai-inbound-voice-calling-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/MuhammadAamirGulzar/ai-inbound-voice-calling-agent/actions/workflows/tests.yml)
+
 A production-oriented **inbound voice AI platform**: callers dial a
 restaurant's phone number, Twilio streams the call audio to this server,
 and a streaming STT → LLM → TTS pipeline answers, takes the order,
