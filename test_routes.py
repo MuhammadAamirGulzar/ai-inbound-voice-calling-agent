@@ -17,8 +17,8 @@ from openvoicechat.llm.llm_ollama_rag import Chatbot_OllamaRAG as Chatbot
 
 from sql.database import SessionLocal
 from sql import models
-from twilio_legacy import FallbackMouth
-from twilio_routes import resolve_restaurants_for_call
+from telephony.legacy import FallbackMouth
+from telephony.twilio_routes import resolve_restaurants_for_call
 
 router = APIRouter()
 
@@ -722,7 +722,7 @@ async def test_media_stream_socket(
                 event = message.get("event")
                 if event == "start":
                     stream_sid = message["start"]["streamSid"]
-                    from websocket_registry import active_connections
+                    from telephony.registry import active_connections
                     active_connections[stream_sid] = websocket
                     call_start_time = time.time()
                     
@@ -758,7 +758,7 @@ async def test_media_stream_socket(
     except Exception as e:
         print(f"[Test Call Web] WS Error: {e}")
     finally:
-        from websocket_registry import active_connections
+        from telephony.registry import active_connections
         if stream_sid:
             active_connections.pop(stream_sid, None)
         listener.stop_call()

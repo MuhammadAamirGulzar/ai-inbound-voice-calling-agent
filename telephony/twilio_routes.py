@@ -143,7 +143,7 @@ async def twilio_media_stream(
         if mode == "auto":
             print("[voice] cloud keys missing (DEEPGRAM_API_KEY / GROQ_API_KEY) — "
                   "falling back to legacy local pipeline.")
-        from twilio_legacy import run_legacy_call
+        from telephony.legacy import run_legacy_call
         await run_legacy_call(websocket, caller_number, to_number,
                               resolve_restaurants_for_call)
 
@@ -265,7 +265,7 @@ def _finalize_call(stream_sid: str, to_number: str, duration_seconds: int,
 async def run_streaming_call(websocket: WebSocket, config: VoiceConfig,
                              caller_number: str, to_number: str):
     """Drive one call on the async streaming engine."""
-    from websocket_registry import active_connections
+    from telephony.registry import active_connections
 
     stream_sid = None
     call_sid = ""

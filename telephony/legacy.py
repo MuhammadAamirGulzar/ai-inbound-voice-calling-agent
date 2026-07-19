@@ -1,100 +1,101 @@
+"""
+Legacy offline call pipeline (local Faster-Whisper + Ollama + Piper).
+
+This is the original thread-per-call implementation, kept as a fallback so
+the platform still answers calls with NO cloud API keys (fully local,
+air-gapped demo). It is turn-based and sequential — expect multi-second
+response latency and no true barge-in. The production path is the
+streaming engine in voice/pipeline.py; see twilio_routes.py for dispatch.
+"""
+
 import os
 import json
 import queue
 import asyncio
 import threading
 import time
-import torch
-import uuid
-from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
-from openvoicechat.stt.stt_faster_whisper import Ear_faster_whisper as Ear
-from openvoicechat.tts.tts_piper import Mouth_piper
-from openvoicechat.tts.tts_elevenlabs import Mouth_elevenlabs
-from openvoicechat.llm.llm_ollama_rag import Chatbot_OllamaRAG as Chatbot
-
-from sip_audio_utils import decode_sip_to_stt, encode_tts_to_sip
 from sql.database import SessionLocal
-from sql import models, crud, schemas
+from sql import models
 
-router = APIRouter()
 
-class SIPListener:
+class TwilioListener:
     def __init__(self, input_queue):
         self.input_queue = input_queue
         self.listening = True
         self.call_active = True
-        
+
         # Required by the VAD algorithm in utils.py (record_user_stream)
         self.CHUNK = 320  # 320 frames per 20ms at 16kHz (640 bytes)
         self.RATE = 16000
 
     def read(self, chunk_size):
         if not self.call_active:
-            raise EOFError("SIP stream disconnected")
+            raise EOFError("Twilio stream disconnected")
+        # We block and wait for the websocket to push 16kHz PCM chunks
         chunk = self.input_queue.get()
         if chunk is None or not self.call_active:
-            raise EOFError("SIP stream disconnected")
+            raise EOFError("Twilio stream disconnected")
         return chunk
 
     def make_stream(self):
         if not self.call_active:
-            raise EOFError("SIP stream disconnected")
+            raise EOFError("Twilio stream disconnected")
         self.listening = True
         self.input_queue.queue.clear()
         return self
 
     def close(self):
+        # Called by record_user_stream when VAD detects the end of speech
         pass
-        
+
     def stop_call(self):
         self.call_active = False
         self.listening = False
         self.input_queue.put(None)
 
 
-class SIPPlayer:
-    def __init__(self, output_queue, target_sample_rate=16000):
+class TwilioPlayer:
+    def __init__(self, output_queue):
         self.output_queue = output_queue
         self.playing = False
         self.interrupted = False
-        self.target_sample_rate = target_sample_rate
 
     def play(self, audio_array, samplerate):
+        from telephony.twilio_audio import encode_tts_to_twilio, chunk_tts_payload
         self.playing = True
         self.interrupted = False
-        
-        # Encode raw TTS numpy array to base64 L16 PCM
-        base64_payload = encode_tts_to_sip(audio_array, samplerate, self.target_sample_rate)
-        
-        # Construct message format for mod_audio_stream
-        payload = {
-            "type": "streamAudio",
-            "data": {
-                "audioDataType": "raw",
-                "sampleRate": self.target_sample_rate,
-                "audioData": base64_payload
-            }
-        }
-        
-        if not self.interrupted:
-            self.output_queue.put(payload)
+
+        # 1. Encode the raw TTS numpy array to Twilio's base64 8kHz mu-law format
+        base64_payload = encode_tts_to_twilio(audio_array, samplerate)
+
+        # 2. Chunk it to stream over the WebSocket
+        chunks = chunk_tts_payload(base64_payload, 4000)
+
+        for chunk in chunks:
+            if self.interrupted:
+                break
+            self.output_queue.put(chunk)
 
     def stop(self):
         self.playing = False
         self.interrupted = True
-        
+
     def wait(self):
+        # Media Streaming pushes rapidly, we don't strictly block here for Twilio
         pass
 
 
-class SIPFallbackMouth:
+class FallbackMouth:
     def __init__(self, player, device, voice_engine="urdu-female"):
+        from openvoicechat.tts.tts_piper import Mouth_piper
+        from openvoicechat.tts.tts_elevenlabs import Mouth_elevenlabs
+
         self.player = player
-        self.piper_mouth = None
-        self.eleven_mouth = None
+        self.device = device
         self.use_eleven = False
+        self.eleven_mouth = None
+        self.piper_mouth = None
 
         api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
         if api_key and api_key != "replace-with-provider-key":
@@ -116,6 +117,7 @@ class SIPFallbackMouth:
         else:
             print("ElevenLabs API Key not provided or placeholder found. Using default (Piper).")
 
+        # Always initialize Piper mouth as the default fallback
         print("Initializing default Piper Mouth...")
         try:
             self.piper_mouth = Mouth_piper(player=player, device=device)
@@ -141,7 +143,8 @@ class SIPFallbackMouth:
                     print("ElevenLabs TTS returned empty/None audio output. Falling back to default (Piper).")
             except Exception as e:
                 print(f"ElevenLabs TTS generation error: {e}. Falling back to default (Piper).")
-        
+
+        # Default Piper TTS
         if self.piper_mouth:
             print(f"Synthesizing via default Piper: '{text[:50]}...'")
             start = time.monotonic()
@@ -155,59 +158,33 @@ class SIPFallbackMouth:
             print("Error: Piper mouth is not initialized.")
 
 
-def resolve_restaurants_for_call(to_number: str, db) -> list:
-    from sql.models import Restaurant
-    if not to_number:
-        return []
-    return db.query(Restaurant).filter(Restaurant.order_phone_number == to_number).all()
+async def run_legacy_call(websocket, caller_number, to_number,
+                          resolve_restaurants_for_call):
+    """Original thread-per-call handler (body of the old WS endpoint)."""
+    import torch
+    from openvoicechat.stt.stt_faster_whisper import Ear_faster_whisper as Ear
+    from openvoicechat.llm.llm_ollama_rag import Chatbot_OllamaRAG as Chatbot
+    from telephony.twilio_audio import decode_twilio_to_stt
 
-
-@router.websocket("/sip-media-stream")
-async def sip_media_stream(
-    websocket: WebSocket,
-    caller_number: Optional[str] = None,
-    to_number: Optional[str] = None
-):
-    await websocket.accept()
-    print(f"SIP Media Stream WebSocket Connected (Caller: {caller_number}, To: {to_number}).")
-    
-    # Check if SIP is enabled
-    sip_enabled = os.getenv("SIP_ENABLED", "false").lower() == "true"
-    if not sip_enabled:
-        print("SIP pathway is disabled via SIP_ENABLED env var. Closing connection.")
-        await websocket.close()
-        return
-
-    from sql.database import SessionLocal
-    from sql import models
-    
     input_queue = queue.Queue()
     output_queue = queue.Queue()
-    
-    sip_sample_rate = int(os.getenv("SIP_STREAM_SAMPLE_RATE", "16000"))
-    
-    listener = SIPListener(input_queue)
-    player = SIPPlayer(output_queue, target_sample_rate=sip_sample_rate)
-    
+
+    listener = TwilioListener(input_queue)
+    player = TwilioPlayer(output_queue)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "float16" if torch.cuda.is_available() else "int8"
-    
-    session_id = None
+
+    stream_sid = None
     call_start_time = None
-    
+
     chatbot_messages = []
     call_status = "completed"
-    
-    c_num = caller_number
-    t_num = to_number
-    
-    loop_thread = None
-    loop_thread_started = False
-    
+
     def conversation_loop():
         nonlocal chatbot_messages, call_status
-        print("Initializing AI models for SIP loop in background thread...")
-        
+        print("Initializing AI models in background thread...")
+
         ear = Ear(
             model_size=os.getenv("STT_MODEL_SIZE", "small"),
             device=device,
@@ -217,16 +194,17 @@ async def sip_media_stream(
             stream=True,
             player=player
         )
-        
+
         # Load agent configuration from database
         db = SessionLocal()
         sys_prompt = "You are the friendly AI voice-agent taking orders. Speak in Roman Urdu/Urdu-English mix."
         greeting = "Assalam-o-Alaikum! Aaj aap kya order karna pasand farmayenge?"
         voice_engine = "urdu-female"
-        
+
         try:
-            from sql import models
-            restaurant = db.query(models.Restaurant).filter(models.Restaurant.order_phone_number == t_num).first()
+            # to_number is the Twilio number called (e.g. restaurant.order_phone_number)
+            # Find the restaurant matching this phone number
+            restaurant = db.query(models.Restaurant).filter(models.Restaurant.order_phone_number == to_number).first()
             if restaurant:
                 agent_config = restaurant.agent_configuration
                 if not agent_config:
@@ -238,10 +216,10 @@ async def sip_media_stream(
                     db.add(agent_config)
                     db.commit()
                     db.refresh(agent_config)
-                
+
                 sys_prompt = agent_config.system_prompt
                 voice_engine = agent_config.voice_engine
-                
+
                 # Fetch greeting directly from RAG or store default
                 try:
                     import requests
@@ -260,19 +238,19 @@ async def sip_media_stream(
                     print(f"Error fetching greeting from RAG: {e}")
                     greeting = f"Assalam-o-Alaikum! {restaurant.name} se AI assistant bol rahi hoon. Aaj aap kya order karna pasand farmayenge?"
         except Exception as e:
-            print(f"Error loading agent configuration in SIP conversation_loop: {e}")
+            print(f"Error loading agent configuration in conversation_loop: {e}")
         finally:
             db.close()
 
-        mouth = SIPFallbackMouth(player=player, device=device, voice_engine=voice_engine)
+        mouth = FallbackMouth(player=player, device=device, voice_engine=voice_engine)
 
-        # Resolve RAG business_id from the restaurant or env var.
+        # Resolve RAG business_id from the restaurant record or the env var.
         rag_business_id = os.getenv("RAG_BUSINESS_ID", "")
         if not rag_business_id:
             try:
                 db2 = SessionLocal()
                 rest = db2.query(models.Restaurant).filter(
-                    models.Restaurant.order_phone_number == t_num
+                    models.Restaurant.order_phone_number == to_number
                 ).first()
                 if rest:
                     rag_business_id = str(rest.id)
@@ -284,208 +262,169 @@ async def sip_media_stream(
             sys_prompt=sys_prompt,
             business_id=rag_business_id,
         )
-        
+
         time.sleep(0.5)
-        
-        print("Speaking greeting over SIP...")
+
+        print("Speaking greeting...")
         mouth.say_text(greeting)
         chatbot.messages.append({"role": "assistant", "content": greeting})
         chatbot_messages = chatbot.messages
-        
+
         while True:
             try:
                 if not listener.call_active:
-                    raise EOFError("SIP stream disconnected")
-                print("Listening for SIP user...")
+                    raise EOFError("Twilio stream disconnected")
+                print("Listening for user...")
                 user_text = ear.listen()
                 if not listener.call_active:
-                    raise EOFError("SIP stream disconnected")
-                
+                    raise EOFError("Twilio stream disconnected")
+
                 if not user_text or not user_text.strip():
                     continue
-                
-                print(f"SIP User said: {user_text.strip()}")
-                print("Generating LLM response for SIP call...")
-                
+
+                print(f"User said: {user_text.strip()}")
+                print("Generating LLM response...")
+
                 llm_response = ""
                 for chunk in chatbot.run(user_text):
                     llm_response += chunk
-                
-                print(f"SIP LLM said: {llm_response}")
+
+                print(f"LLM said: {llm_response}")
                 chatbot.post_process(llm_response)
                 chatbot_messages = chatbot.messages
-                
-                print("Speaking LLM response over SIP...")
+
+                print("Speaking LLM response...")
                 mouth.say_text(llm_response)
             except EOFError:
-                print("SIP Caller hung up. Ending conversation loop gracefully.")
+                print("Caller hung up. Ending conversation loop gracefully.")
                 call_status = "completed"
                 break
             except Exception as e:
-                print(f"SIP Conversation loop ended or error: {e}")
+                print(f"Conversation loop ended or error: {e}")
                 call_status = "failed"
                 break
+
+    loop_thread = threading.Thread(target=conversation_loop, daemon=True)
 
     async def send_audio_task():
         while True:
             try:
-                payload = await asyncio.to_thread(output_queue.get)
-                if payload is None:
+                chunk = await asyncio.to_thread(output_queue.get)
+                if chunk is None:
                     break
-                await websocket.send_json(payload)
+                if stream_sid:
+                    media_msg = {
+                        "event": "media",
+                        "streamSid": stream_sid,
+                        "media": {"payload": chunk}
+                    }
+                    await websocket.send_json(media_msg)
             except Exception as e:
-                print(f"SIP Send audio error: {e}")
+                print(f"Send audio error: {e}")
                 break
 
     send_task = asyncio.create_task(send_audio_task())
-    
+
+    from fastapi import WebSocketDisconnect
+
     try:
         while True:
-            data = await websocket.receive()
-            
-            # Handle text frame (metadata/control message)
-            if "text" in data:
-                text_msg = data["text"]
+            data = await websocket.receive_text()
+            message = json.loads(data)
+
+            event = message.get("event")
+
+            if event == "connected":
+                print("Twilio Stream connected event received.")
+            elif event == "start":
+                stream_sid = message["start"]["streamSid"]
+                print(f"Twilio Stream started. StreamSid: {stream_sid}")
+                from telephony.registry import active_connections
+                active_connections[stream_sid] = websocket
+                call_start_time = time.time()
+
+                db = SessionLocal()
                 try:
-                    message = json.loads(text_msg)
-                    status = message.get("status")
-                    event = message.get("event")
-                    
-                    if status == "connected" or event == "connect" or "channel_uuid" in message:
-                        print(f"SIP Metadata/Connect frame received: {text_msg}")
-                        session_id = message.get("channel_uuid") or message.get("uuid") or str(uuid.uuid4())
-                        
-                        if not c_num:
-                            c_num = message.get("caller_number") or message.get("caller_id") or message.get("from")
-                        if not t_num:
-                            t_num = message.get("to_number") or message.get("to")
-                            
-                        if not session_id:
-                            session_id = str(uuid.uuid4())
-                            
-                        if not call_start_time:
-                            call_start_time = time.time()
-                            
-                        db = SessionLocal()
-                        try:
-                            restaurants = resolve_restaurants_for_call(t_num, db)
-                            if not restaurants:
-                                print(f"WARNING: resolve_restaurants_for_call('{t_num}') returned zero matches on SIP call start.")
-                            for r in restaurants:
-                                new_log = models.ChatHistory(
-                                    session_id=session_id,
-                                    restaurant_id=r.id,
-                                    caller_number=c_num,
-                                    chat_data=[],
-                                    response_time=0.0,
-                                    status="in_progress",
-                                    duration_seconds=None,
-                                    recording_url=None,
-                                    transport="sip"
-                                )
-                                db.add(new_log)
-                            db.commit()
-                            print(f"Created initial call_logs rows for {len(restaurants)} restaurants with transport='sip'.")
-                        except Exception as db_e:
-                            print(f"Error creating call_logs rows on SIP start: {db_e}")
-                            db.rollback()
-                        finally:
-                            db.close()
-                            
-                        if not loop_thread_started:
-                            loop_thread = threading.Thread(target=conversation_loop, daemon=True)
-                            loop_thread.start()
-                            loop_thread_started = True
-                            
-                    elif status == "disconnected" or event == "disconnect":
-                        print("SIP Stream disconnect event received.")
-                        break
-                except json.JSONDecodeError:
-                    print(f"Received raw text frame (ignored): {text_msg}")
-                    
-            # Handle binary PCM audio frame
-            elif "bytes" in data:
-                pcm_bytes = data["bytes"]
-                
-                if not loop_thread_started:
-                    if not session_id:
-                        session_id = str(uuid.uuid4())
-                    if not call_start_time:
-                        call_start_time = time.time()
-                        
-                    db = SessionLocal()
-                    try:
-                        restaurants = resolve_restaurants_for_call(t_num, db)
-                        for r in restaurants:
-                            new_log = models.ChatHistory(
-                                session_id=session_id,
-                                restaurant_id=r.id,
-                                caller_number=c_num,
-                                chat_data=[],
-                                response_time=0.0,
-                                status="in_progress",
-                                duration_seconds=None,
-                                recording_url=None,
-                                transport="sip"
-                            )
-                            db.add(new_log)
-                        db.commit()
-                        print(f"Lazy started SIP call_logs with transport='sip' for {len(restaurants)} restaurants.")
-                    except Exception as db_e:
-                        print(f"Error creating call_logs rows on lazy start: {db_e}")
-                        db.rollback()
-                    finally:
-                        db.close()
-                        
-                    loop_thread = threading.Thread(target=conversation_loop, daemon=True)
-                    loop_thread.start()
-                    loop_thread_started = True
-                
-                pcm_bytes_16k = decode_sip_to_stt(pcm_bytes, sip_sample_rate)
+                    restaurants = resolve_restaurants_for_call(to_number, db)
+                    if not restaurants:
+                        print(f"WARNING: resolve_restaurants_for_call('{to_number}') returned zero matches on call start.")
+                    for r in restaurants:
+                        new_log = models.ChatHistory(
+                            session_id=stream_sid,
+                            restaurant_id=r.id,
+                            caller_number=caller_number,
+                            chat_data=[],
+                            response_time=0.0,
+                            status="in_progress",
+                            duration_seconds=None,
+                            recording_url=None
+                        )
+                        db.add(new_log)
+                    db.commit()
+                    print(f"Created initial call_logs in_progress rows for {len(restaurants)} restaurants.")
+                except Exception as db_e:
+                    print(f"Error creating call_logs rows on start: {db_e}")
+                    db.rollback()
+                finally:
+                    db.close()
+
+                loop_thread.start()
+
+            elif event == "media":
+                chunk = message["media"]["payload"]
+                pcm_bytes = decode_twilio_to_stt(chunk)
                 if listener.listening:
-                    input_queue.put(pcm_bytes_16k)
-                    
+                    input_queue.put(pcm_bytes)
+            elif event == "stop":
+                print("Twilio Stream stop event received.")
+                break
+            else:
+                pass
     except WebSocketDisconnect:
-        print("SIP Media Stream WebSocket Disconnected cleanly.")
+        print("Twilio Media Stream WebSocket Disconnected cleanly.")
     except Exception as e:
-        print(f"SIP Media Stream error: {e}")
+        print(f"Twilio Media Stream error: {e}")
     finally:
-        print("Closing SIP Media Stream connection.")
+        print("Closing Twilio Media Stream connection.")
+        from telephony.registry import active_connections
+        if stream_sid:
+            active_connections.pop(stream_sid, None)
         output_queue.put(None)
         listener.stop_call()
         player.stop()
-        
+        send_task.cancel()
+
         if call_start_time is not None:
             call_end_time = time.time()
             duration_seconds = int(call_end_time - call_start_time)
             duration_minutes = duration_seconds / 60.0
-            print(f"SIP Call ended. Duration: {duration_seconds} seconds ({duration_minutes:.2f} minutes).")
-            
+            print(f"Call ended. Duration: {duration_seconds} seconds ({duration_minutes:.2f} minutes).")
+
             db = SessionLocal()
             try:
-                restaurants = resolve_restaurants_for_call(t_num, db)
-                
+                restaurants = resolve_restaurants_for_call(to_number, db)
+
                 for r in restaurants:
                     r.used_minutes += duration_minutes
                     if r.used_minutes >= r.assigned_minutes:
                         r.is_suspended = True
                         print(f"Restaurant '{r.name}' has exceeded its quota ({r.used_minutes:.2f}/{r.assigned_minutes} minutes). Auto-suspending.")
-                
-                if session_id:
+
+                if stream_sid:
                     user_spoke = False
                     if chatbot_messages:
                         user_spoke = any(msg.get("role") == "user" for msg in chatbot_messages)
-                    
+
                     final_status = call_status
                     if final_status == "completed" and not user_spoke:
                         final_status = "missed"
-                        
-                    logs = db.query(models.ChatHistory).filter(models.ChatHistory.session_id == session_id).all()
+
+                    logs = db.query(models.ChatHistory).filter(models.ChatHistory.session_id == stream_sid).all()
                     for log in logs:
-                        log.chat_data = chatbot_messages
+                        log.chat_data = [msg for msg in chatbot_messages if msg.get("role") != "system"]
                         log.duration_seconds = duration_seconds
                         log.status = final_status
-                        
+
                         # Auto-extract order from transcript if the call was completed
                         if final_status == "completed":
                             from utils.order_extractor import extract_order_from_transcript
@@ -493,11 +432,11 @@ async def sip_media_stream(
                                 extract_order_from_transcript(log, db)
                             except Exception as parse_err:
                                 print(f"Error auto-extracting order from call transcript: {parse_err}")
-                
+
                 db.commit()
-                print(f"Updated call_logs and minutes for {len(restaurants)} restaurants over SIP.")
+                print(f"Updated call_logs and minutes for {len(restaurants)} restaurants.")
             except Exception as db_err:
-                print(f"Error updating SIP call logs/minutes: {db_err}")
+                print(f"Error updating call logs/minutes: {db_err}")
                 db.rollback()
             finally:
                 db.close()

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from sql import crud, models, schemas
 from sql.database import engine, SessionLocal
-from twilio_routes import router as twilio_router
+from telephony.twilio_routes import router as twilio_router
 from utils.authentication import create_access_token
 from utils.logger import print_info, print_error
 from utils.cookies import validate_admin_cookies, validate_superadmin_cookies, validate_cookies
@@ -171,7 +171,7 @@ except ImportError as _test_err:
 SIP_ENABLED = os.getenv("SIP_ENABLED", "false").lower() == "true"
 if SIP_ENABLED:
     try:
-        from sip_routes import router as sip_router
+        from telephony.sip_routes import router as sip_router
         app.include_router(sip_router)
         print("SIP routes registered successfully.")
     except Exception as e:
@@ -1280,7 +1280,7 @@ async def admin_hangup(request: Request, db: Session = Depends(get_db)):
         if not session_id:
             return JSONResponse(status_code=400, content={"error": "Missing session_id"})
             
-        from websocket_registry import active_connections
+        from telephony.registry import active_connections
         websocket = active_connections.get(session_id)
         if websocket:
             print(f"Hanging up active call with session_id: {session_id}")
