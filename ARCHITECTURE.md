@@ -92,7 +92,7 @@ voice.pipeline.CallSession                  ── one asyncio task tree per cal
    STT retries once on connect; RAG times out to no-context; a missing
    Twilio credential disables transfers/hangup but never breaks the
    conversation; missing cloud keys entirely drops the deployment to the
-   legacy offline pipeline (`twilio_legacy.py`).
+   legacy offline pipeline (`telephony/legacy.py`).
 
 ## Metrics model
 

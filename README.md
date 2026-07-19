@@ -170,14 +170,21 @@ voice/                  streaming engine (the interesting part)
   rag.py                budget-capped async RAG context lookup
   config.py             env + per-tenant VoiceConfig
   audio.py              numpy μ-law codec (simulator/legacy edges only)
-twilio_routes.py        webhook, media-stream endpoint, pipeline dispatch
-twilio_legacy.py        offline local pipeline (whisper/ollama/piper)
+telephony/              transport layer
+  twilio_routes.py      webhook, media-stream endpoint, pipeline dispatch
+  legacy.py             offline local pipeline (whisper/ollama/piper)
+  sip_routes.py         SIP media-stream bridge (behind SIP_ENABLED)
+  registry.py           live-call registry for the admin dashboard
+web/                    dashboard + APIs, one router per audience
+  auth.py / admin.py / superadmin.py / api.py / test_console.py
+services/               menu sync, RAG sidecar lifecycle, billing reminders
 tools/call_simulator.py Twilio-free eval harness (latency/barge-in/load)
 tools/stt_eval.py       WER evaluation with keyterm A/B at telephone band
 tools/judge_eval.py     LLM-as-judge transcript scoring (CI-gateable)
 tests/test_voice.py     unit tests: codec, chunker, metrics, barge-in
 knowledge_rag/          RAG sidecar: menu + business knowledge (Chroma)
-app.py, templates/      multi-tenant admin (live calls, orders, analytics)
+app.py                  slim entrypoint assembling the packages above
+templates/, static/     dashboard views and assets
 sql/                    SQLAlchemy models incl. per-call metrics JSON
 ```
 
