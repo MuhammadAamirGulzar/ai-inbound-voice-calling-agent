@@ -43,7 +43,7 @@ Caller ──PSTN──> Twilio ──Media Stream (WS, μ-law 8kHz)──> Fast
 | **Concurrency** | One asyncio task tree per call; no threads, no local models on the hot path; DB writes pushed to worker threads. A small instance can hold dozens of simultaneous calls; capacity is provider-rate-limited, not CPU-bound. |
 | **Transfers** | The LLM decides via a `transfer_call` tool. The caller hears a hold line; the staff member hears an AI-generated **whisper summary** of the call before being bridged (warm transfer); no-answer falls back to an apology instead of dead air. |
 | **Reliability** | TTS provider fallback (Aura ⇄ ElevenLabs), STT reconnect-on-start retry, RAG lookups under a hard 1.5 s budget (degrade to no context, never a slow answer), max-call-duration watchdog, graceful `end_call` hangup via Twilio REST. |
-| **Observability** | Every turn records a timestamp waterfall: STT final → LLM first token → TTS first byte → first audio frame sent, plus barge-ins, tool calls, and errors. Persisted per call (JSON), rendered in the admin call-detail page, and emitted as a structured `call_metrics` log line. |
+| **Observability** | Every turn records a timestamp waterfall: STT final → LLM first token → TTS first byte → first audio frame sent, plus barge-ins, tool calls, and errors. Persisted per call (JSON), rendered in the admin call-detail page, emitted as a structured `call_metrics` log line, and aggregated at `/metrics` in Prometheus format (latency histogram, call/turn/barge-in/error counters) for Grafana dashboards. |
 | **Multi-tenant** | Prompt, greeting, language, voices, endpointing, and transfer number are per-restaurant (`AgentConfiguration.voice_settings`), resolved per call by the dialed number. |
 
 ## Two pipelines, one platform
@@ -105,6 +105,22 @@ python tools/call_simulator.py --say "Hi, what are your opening hours?" --calls 
 The report prints per-turn response latency (last caller frame → first
 bot audio frame) and saves the bot's audio to `sim_output/*.wav`.
 
+### Offline evals
+
+```bash
+# STT accuracy: word error rate on real recordings or a synthetic set,
+# with/without keyterm boosting, at telephone-band 8 kHz
+python tools/stt_eval.py --synth "one chicken burger please" \
+    "do you deliver to gulberg" --keyterms "gulberg,chicken burger"
+python tools/stt_eval.py --pairs evals/stt_set.jsonl --report wer.json
+
+# LLM-as-judge: score call transcripts on task completion, brevity,
+# language consistency, groundedness and call control; non-zero exit
+# below threshold, so it can gate CI on a regression set
+python tools/judge_eval.py --from-db 5 --fail-under 3
+python tools/judge_eval.py --file evals/regression/*.json
+```
+
 ### Go live on a real number
 
 1. Buy/claim a Twilio number (trial credit works) and point its Voice
@@ -149,6 +165,7 @@ voice/                  streaming engine (the interesting part)
   tts.py                Aura + ElevenLabs streaming TTS (μ-law native)
   sentence_stream.py    incremental sentence chunking for token streams
   metrics.py            per-turn latency waterfall, call summaries
+  telemetry.py          process-wide aggregates for /metrics (Prometheus)
   transfer.py           Twilio REST call control (warm transfer, hangup)
   rag.py                budget-capped async RAG context lookup
   config.py             env + per-tenant VoiceConfig
@@ -156,6 +173,8 @@ voice/                  streaming engine (the interesting part)
 twilio_routes.py        webhook, media-stream endpoint, pipeline dispatch
 twilio_legacy.py        offline local pipeline (whisper/ollama/piper)
 tools/call_simulator.py Twilio-free eval harness (latency/barge-in/load)
+tools/stt_eval.py       WER evaluation with keyterm A/B at telephone band
+tools/judge_eval.py     LLM-as-judge transcript scoring (CI-gateable)
 tests/test_voice.py     unit tests: codec, chunker, metrics, barge-in
 knowledge_rag/          RAG sidecar: menu + business knowledge (Chroma)
 app.py, templates/      multi-tenant admin (live calls, orders, analytics)

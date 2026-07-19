@@ -39,6 +39,7 @@ from .metrics import CallMetrics, TurnMetrics
 from .rag import build_rag_context
 from .sentence_stream import SentenceStream
 from .stt import DeepgramLiveSTT, STTEvent
+from .telemetry import telemetry
 from .transfer import TwilioCallControl
 from .tts import make_tts, make_fallback_tts
 
@@ -129,6 +130,7 @@ class CallSession:
     async def run(self):
         """Main loop; returns when the call is over."""
         started = time.monotonic()
+        telemetry.call_started()
         try:
             await self.stt.start()
         except Exception:
@@ -138,6 +140,7 @@ class CallSession:
                 await self.stt.start()
             except Exception:
                 self.metrics.disconnect_reason = "stt_connect_failed"
+                telemetry.provider_error("stt")
                 self.ended.set()
                 return
 
@@ -173,6 +176,10 @@ class CallSession:
             await self.shutdown()
 
     async def shutdown(self):
+        # shutdown() can be invoked from both run() and the route's finally.
+        if not getattr(self, "_shutdown_done", False):
+            self._shutdown_done = True
+            telemetry.call_ended()
         self.ended.set()
         if self._respond_task and not self._respond_task.done():
             self._respond_task.cancel()
@@ -226,16 +233,18 @@ class CallSession:
         if self._respond_task and not self._respond_task.done():
             self._respond_task.cancel()
         # Snapshot BEFORE clearing: Twilio may flush queued marks on clear,
-        # which must not count as "the caller heard this".
+        # which must not count as "the caller heard this". Turn flags are
+        # set before the first await so the cancelled respond task's
+        # cleanup never records the turn without them.
         played = self._spoken_sentences[:self._played_marks]
-        try:
-            await self.transport.send_clear()
-        except Exception:
-            pass
         if self.metrics.turns:
             turn = self.metrics.turns[-1]
             turn.barged_in = True
             turn.agent_text = " ".join(played)
+        try:
+            await self.transport.send_clear()
+        except Exception:
+            pass
         if played:
             self.messages.append({
                 "role": "assistant",
@@ -281,8 +290,10 @@ class CallSession:
                 raise
             except Exception as e:
                 last_error = e
+                telemetry.tts_fallback()
                 print(f"[voice] TTS {provider.provider_name} failed: {e}")
         if last_error:
+            telemetry.provider_error("tts")
             raise last_error
 
     async def _speak_sentences(self, sentences, mark_prefix: str,
@@ -394,6 +405,8 @@ class CallSession:
             except Exception:
                 pass
             self.state = "listening"
+        finally:
+            telemetry.record_turn(turn)
 
     # ── call control ─────────────────────────────────────────────────────
     async def _do_transfer(self, args: dict, seq: int):

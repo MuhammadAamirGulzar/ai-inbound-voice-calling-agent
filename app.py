@@ -147,6 +147,18 @@ templates.env.globals["pk_time"] = pk_time_filter
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(twilio_router)
 
+# Prometheus scrape target for the streaming voice engine. Aggregates
+# only (latency histogram, call/turn/barge-in counters) — no call content.
+from voice.telemetry import telemetry as _voice_telemetry
+
+
+@app.get("/metrics")
+async def metrics():
+    from fastapi import Response as _Response
+    return _Response(content=_voice_telemetry.render_prometheus(),
+                     media_type="text/plain; version=0.0.4")
+
+
 # Browser-mic test console needs the local ML stack (torch/whisper);
 # skip it gracefully on cloud-streaming-only deployments.
 try:

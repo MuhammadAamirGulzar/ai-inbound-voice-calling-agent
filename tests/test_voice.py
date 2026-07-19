@@ -332,3 +332,60 @@ def test_user_speech_while_responding_is_queued():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# telemetry
+# ─────────────────────────────────────────────────────────────────────────
+def test_telemetry_counters_and_histogram():
+    from voice.telemetry import VoiceTelemetry
+    t = VoiceTelemetry()
+    t.call_started()
+    turn = TurnMetrics(endpointing_ms=0)
+    turn.t_stt_final = 0.0
+    turn.t_first_audio_sent = 600.0
+    t.record_turn(turn)
+    barged = TurnMetrics(endpointing_ms=0)
+    barged.barged_in = True
+    t.record_turn(barged)
+    t.call_ended()
+
+    out = t.render_prometheus()
+    assert "voice_calls_active 0" in out
+    assert "voice_calls_total 1" in out
+    assert "voice_turns_total 2" in out
+    assert "voice_barge_ins_total 1" in out
+    # 600ms falls in the le=750 bucket, cumulative counts include it upward
+    assert 'voice_turn_response_ms_bucket{le="500"} 0' in out
+    assert 'voice_turn_response_ms_bucket{le="750"} 1' in out
+    assert 'voice_turn_response_ms_bucket{le="+Inf"} 1' in out
+    assert "voice_turn_response_ms_count 1" in out
+
+
+def test_respond_records_turn_in_telemetry():
+    from voice.telemetry import telemetry
+
+    async def scenario():
+        before = telemetry.turns_total
+        transport = FakeTransport()
+        session = make_session(transport)
+        await session._respond("hello there")
+        return before
+
+    before = asyncio.run(scenario())
+    assert telemetry.turns_total == before + 1
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# WER (tools/stt_eval.py)
+# ─────────────────────────────────────────────────────────────────────────
+def test_word_error_rate():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    from stt_eval import word_error_rate
+    assert word_error_rate("one chicken burger", "one chicken burger") == 0.0
+    assert word_error_rate("one chicken burger", "one cheese burger") == round(1 / 3, 4)
+    assert word_error_rate("hello", "") == 1.0
+    # punctuation/case insensitive
+    assert word_error_rate("Hello, there!", "hello there") == 0.0
+    # insertion counts against hypothesis
+    assert word_error_rate("hello there", "well hello there") == 0.5
